@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { buildAnchorMap, buildZoneContour, dedupeRenderEdges, edgeRenderMotion, idleRenderOffset, nextIdleMotionState, zoneIdByTopicId } from "./graphCanvasCore";
+import { buildAnchorMap, buildZoneContour, computeReadyTopicIds, dedupeRenderEdges, edgeRenderMotion, idleRenderOffset, nextIdleMotionState, zoneIdByTopicId } from "./graphCanvasCore";
 import type { Edge, Zone } from "../lib/types";
 
 describe("overlapping zones", () => {
@@ -233,5 +233,21 @@ describe("dedupeRenderEdges", () => {
     ] as Edge[];
     expect(dedupeRenderEdges(edges, new Set()).map((edge) => edge.id)).toEqual(["e-req", "e-other"]);
     expect(dedupeRenderEdges(edges, new Set(["e-rev"])).map((edge) => edge.id)).toEqual(["e-rev", "e-other"]);
+  });
+});
+
+describe("computeReadyTopicIds", () => {
+  it("marks unclosed topics whose requires prerequisites are all closed as ready", () => {
+    const nodes = [
+      { id: "a", title: "A", state: "solid" as const, level: 0 },
+      { id: "b", title: "B", state: "not_started" as const, level: 1 },
+      { id: "c", title: "C", state: "not_started" as const, level: 2 },
+      { id: "d", title: "D", state: "not_started" as const, level: 0 },
+    ];
+    const edges = [
+      { id: "e1", source_topic_id: "a", target_topic_id: "b", relation: "requires", rationale: "" },
+      { id: "e2", source_topic_id: "b", target_topic_id: "c", relation: "requires", rationale: "" },
+    ] as Edge[];
+    expect([...computeReadyTopicIds(nodes, edges)].sort()).toEqual(["b", "d"]);
   });
 });

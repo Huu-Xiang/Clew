@@ -221,6 +221,26 @@ export function dedupeRenderEdges(edges: Edge[], pathEdgeIds: Set<string>): Edge
     .map((entry) => entry.edge);
 }
 
+/** Return topic IDs that are not yet closed and have all `requires` prerequisites closed. */
+export function computeReadyTopicIds(nodes: GraphNode[], edges: Edge[]): Set<string> {
+  const closed = new Set(
+    nodes.filter((node) => node.state === "solid" || node.state === "mastered").map((node) => node.id),
+  );
+  const blocked = new Set<string>();
+  for (const edge of edges) {
+    if (edge.relation === "requires" && !closed.has(edge.source_topic_id)) {
+      blocked.add(edge.target_topic_id);
+    }
+  }
+  const ready = new Set<string>();
+  for (const node of nodes) {
+    if (!closed.has(node.id) && !blocked.has(node.id)) {
+      ready.add(node.id);
+    }
+  }
+  return ready;
+}
+
 export function nodeRadius(node: GraphNode, selected: boolean, onPath: boolean, isRoot: boolean): number {
   if (selected) return 8;
   if (onPath) return 7;

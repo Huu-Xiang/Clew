@@ -12,6 +12,7 @@ import {
   cacheEntryKey,
   clamp,
   cloneManualNodePositions,
+  computeReadyTopicIds,
   dedupeRenderEdges,
   edgeRenderMotion,
   graphCanvasPalette,
@@ -1174,6 +1175,8 @@ function GraphCanvasComponent({
       }
       const edgePositions = idleVisualMotionEnabled ? positions : renderPositions;
       const renderEdges = dedupeRenderEdges(currentEdges, pathEdgeIdsRef.current);
+      const readyTopicIds = computeReadyTopicIds(currentNodes, currentEdges);
+      const nodeById = new Map(currentNodes.map((node) => [node.id, node]));
       const bundleMetaByEdgeId = new Map<string, { angle: number; laneOffset: number; laneCount: number }>();
 
       const outgoingBySource = new Map<string, Array<{ edge: Edge; angle: number }>>();
@@ -1238,6 +1241,7 @@ function GraphCanvasComponent({
         const endControlX = targetX - Math.cos(targetAngle) * endBundleDist + perpX * laneOffset * 0.24;
         const endControlY = targetY - Math.sin(targetAngle) * endBundleDist + perpY * laneOffset * 0.24;
 
+        const isAuxEdge = edge.relation !== "requires";
         ctx2.beginPath();
         ctx2.moveTo(from.x, from.y);
         if (curvedEdgeLinesEnabledRef.current) {
@@ -1245,6 +1249,7 @@ function GraphCanvasComponent({
         } else {
           ctx2.lineTo(targetX, targetY);
         }
+        let arrowFillStyle: string | CanvasGradient = `rgba(${paletteRef.current.edgeRgb},${Math.min(0.85, canvasStyleRef.current.edgeOpacity * 1.45 * edgeBrightness)})`;
         if (onPath) {
           if (themeModeRef.current === "light" && (highlightedSourceZone || highlightedTargetZone)) {
             const startRgb = hexToRgb(highlightedSourceZone?.color ?? highlightedTargetZone?.color ?? "#64748b") ?? { r: 100, g: 116, b: 139 };
@@ -1254,16 +1259,19 @@ function GraphCanvasComponent({
               gradient.addColorStop(0, rgbaString(startRgb, Math.max(0.24, pulse * 0.7 * edgeBrightness)));
               gradient.addColorStop(1, rgbaString(endRgb, Math.max(0.24, pulse * 0.7 * edgeBrightness)));
               ctx2.strokeStyle = gradient;
+              arrowFillStyle = rgbaString(endRgb, Math.max(0.45, pulse * 0.85 * edgeBrightness));
             } else {
               const rgb = mixRgb(startRgb, { r: 100, g: 116, b: 139 }, 0.1);
               ctx2.strokeStyle = rgbaString(rgb, Math.max(0.22, pulse * 0.72 * edgeBrightness));
+              arrowFillStyle = rgbaString(rgb, Math.max(0.45, pulse * 0.85 * edgeBrightness));
             }
           } else {
-            ctx2.strokeStyle = `rgba(${paletteRef.current.edgeRgb},${Math.max(0.04, pulse * edgeBrightness)})`;
+            ctx2.strokeStyle = `rgba(${paletteRef.current.edgeRgb},${Math.max(0.18, pulse * edgeBrightness)})`;
+            arrowFillStyle = `rgba(${paletteRef.current.edgeRgb},${Math.max(0.32, pulse * edgeBrightness)})`;
           }
           ctx2.lineWidth = Math.max(1.7, canvasStyleRef.current.edgeWidth + 0.5);
-        } else if (onFrontier) {
-          ctx2.setLineDash([7, 9]);
+        } else if (onFrontier || isAuxEdge) {
+          ctx2.setLineDash(onFrontier ? [7, 9] : [4, 5]);
           ctx2.strokeStyle = `rgba(${paletteRef.current.edgeRgb},${canvasStyleRef.current.edgeOpacity * edgeBrightness})`;
           ctx2.lineWidth = canvasStyleRef.current.edgeWidth;
         } else {
@@ -1271,8 +1279,38 @@ function GraphCanvasComponent({
           ctx2.lineWidth = canvasStyleRef.current.edgeWidth;
         }
         ctx2.stroke();
-        if (onFrontier) {
+        if (onFrontier || isAuxEdge) {
           ctx2.setLineDash([]);
+        }
+
+        // Draw directional arrowhead near the target node rim so prerequisite flow is unmistakable.
+        if (edgeBrightness > 0.7) {
+          const targetNode = nodeById.get(edge.target_topic_id);
+          const targetR = targetNode
+            ? nodeRadius(
+                targetNode,
+                selectedTopicIdRef.current === targetNode.id,
+                pathNodeIdsRef.current.has(targetNode.id),
+                rootIdsRef.current.has(targetNode.id),
+              )
+            : 6;
+          const arrivalAngle = curvedEdgeLinesEnabledRef.current
+            ? Math.atan2(targetY - endControlY, targetX - endControlX)
+            : Math.atan2(targetY - from.y, targetX - from.x);
+          const dist = Math.hypot(targetX - from.x, targetY - from.y);
+          if (dist > targetR + 14) {
+            const tipX = targetX - Math.cos(arrivalAngle) * (targetR + 5);
+            const tipY = targetY - Math.sin(arrivalAngle) * (targetR + 5);
+            const arrowLen = (onPath ? 8.5 : 7) + canvasStyleRef.current.edgeWidth * 0.7;
+            const wingAngle = 0.42;
+            ctx2.beginPath();
+            ctx2.moveTo(tipX, tipY);
+            ctx2.lineTo(tipX - Math.cos(arrivalAngle - wingAngle) * arrowLen, tipY - Math.sin(arrivalAngle - wingAngle) * arrowLen);
+            ctx2.lineTo(tipX - Math.cos(arrivalAngle + wingAngle) * arrowLen, tipY - Math.sin(arrivalAngle + wingAngle) * arrowLen);
+            ctx2.closePath();
+            ctx2.fillStyle = arrowFillStyle;
+            ctx2.fill();
+          }
         }
       }
 
@@ -1347,9 +1385,20 @@ function GraphCanvasComponent({
           ctx2.stroke();
           ctx2.setLineDash([]);
           ctx2.shadowBlur = 0;
+        } else if (brightness > 0.06 && readyTopicIds.has(node.id)) {
+          // Highlight ready-to-start entry nodes so learners immediately see where to begin.
+          ctx2.strokeStyle = `rgba(${paletteRef.current.frontierRgb},${0.78 * brightness})`;
+          ctx2.lineWidth = 1.65;
+          ctx2.beginPath();
+          ctx2.arc(position.x, position.y, r + 5.5, 0, Math.PI * 2);
+          ctx2.stroke();
+          ctx2.fillStyle = `rgba(${paletteRef.current.frontierRgb},${0.16 * brightness})`;
+          ctx2.beginPath();
+          ctx2.arc(position.x, position.y, r + 5.5, 0, Math.PI * 2);
+          ctx2.fill();
         } else if (brightness > 0.06 && isRoot) {
           ctx2.setLineDash([4, 6]);
-          ctx2.strokeStyle = `rgba(${paletteRef.current.edgeRgb},${0.14 * brightness})`;
+          ctx2.strokeStyle = `rgba(${paletteRef.current.edgeRgb},${0.22 * brightness})`;
           ctx2.lineWidth = 1;
           ctx2.beginPath();
           ctx2.arc(position.x, position.y, r + 8, 0, Math.PI * 2);
@@ -1502,22 +1551,38 @@ function GraphCanvasComponent({
       ctx2.restore();
 
       for (const zone of zonesDataRef.current) {
-        if (!selectedZoneIds.has(zone.id)) continue;
+        const isHighlightedZone = selectedZoneIds.has(zone.id);
+        if (!isHighlightedZone && !canvasStyleRef.current.showZoneOutlines) continue;
         const zonePoints = zone.topic_ids.map((topicId) => renderPositions.get(topicId)).filter((point): point is NodePosition => Boolean(point));
         if (zonePoints.length === 0) continue;
-        const center = zonePoints.reduce(
-          (acc, point) => ({ x: acc.x + point.x / zonePoints.length, y: acc.y + point.y / zonePoints.length }),
-          { x: 0, y: 0 },
-        );
-        const rgb = hexToRgb(zone.color) ?? { r: 255, g: 214, b: 10 };
+        const avgX = zonePoints.reduce((acc, point) => acc + point.x, 0) / zonePoints.length;
+        const minY = Math.min(...zonePoints.map((point) => point.y));
+        const labelX = avgX;
+        const labelY = minY - 34;
+        const rgb = hexToRgb(zone.color) ?? { r: 217, g: 119, b: 87 };
+        const badgeText = `${zone.title} · ${zonePoints.length}`;
         ctx2.save();
-        ctx2.font = "12px 'Berkeley Mono', 'JetBrains Mono', monospace";
+        ctx2.font = "600 11px -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Segoe UI', 'Inter', sans-serif";
         ctx2.textAlign = "center";
         ctx2.textBaseline = "middle";
-        ctx2.fillStyle = `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0.95)`;
-        ctx2.shadowBlur = 22;
-        ctx2.shadowColor = `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0.24)`;
-        ctx2.fillText(zone.title, center.x, center.y - 18);
+        const textWidth = ctx2.measureText(badgeText).width;
+        const padX = 9;
+        const pillW = textWidth + padX * 2;
+        const pillH = 22;
+        const pillBg = themeModeRef.current === "light"
+          ? rgbaString(mixRgb(rgb, { r: 255, g: 255, b: 255 }, 0.88), isHighlightedZone ? 0.96 : 0.88)
+          : rgbaString(mixRgb(rgb, { r: 20, g: 20, b: 24 }, 0.82), isHighlightedZone ? 0.94 : 0.78);
+        ctx2.beginPath();
+        ctx2.roundRect(labelX - pillW / 2, labelY - pillH / 2, pillW, pillH, 999);
+        ctx2.fillStyle = pillBg;
+        ctx2.fill();
+        ctx2.lineWidth = 1;
+        ctx2.strokeStyle = rgbaString(rgb, isHighlightedZone ? 0.72 : 0.38);
+        ctx2.stroke();
+        ctx2.fillStyle = themeModeRef.current === "light"
+          ? rgbaString(mixRgb(rgb, { r: 36, g: 34, b: 31 }, 0.35), isHighlightedZone ? 0.96 : 0.84)
+          : rgbaString(rgb, isHighlightedZone ? 0.98 : 0.85);
+        ctx2.fillText(badgeText, labelX, labelY);
         ctx2.restore();
       }
 
