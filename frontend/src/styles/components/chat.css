@@ -810,3 +810,20 @@
   background: var(--ui-fill-2);
   color: var(--ui-fg);
 }
+
+.topicPopoverJumpLink {
+  display: inline;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--ui-primary);
+  font: inherit;
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, var(--ui-primary) 45%, transparent);
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
+.topicPopoverJumpLink:hover {
+  text-decoration-color: var(--ui-primary);
+}

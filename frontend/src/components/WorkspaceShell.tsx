@@ -685,7 +685,7 @@ export function WorkspaceShell(props: WorkspaceShellProps): React.JSX.Element {
   const generalSession = chatSessions.find((session) => !session.topic_id) ?? null;
   const topicSessions = chatSessions.filter((session) => Boolean(session.topic_id));
   const visibleMessages = currentChatState.messages.filter((message) => !message.hidden);
-  const pathTitles = focusData.pathLayers.flat().map((entry) => entry.title);
+  const pathEntries = focusData.pathLayers.flat();
   const selectedTopicClosed = selectedTopic?.state === "solid" || selectedTopic?.state === "mastered";
   const topicPopoverConnector = React.useMemo(() => {
     if (graphViewMode !== "3d" || !selectedTopic || !selectedTopicAnchor || !popoverPosition || isMobileViewport) return null;
@@ -1361,9 +1361,23 @@ export function WorkspaceShell(props: WorkspaceShellProps): React.JSX.Element {
                     <div className="topicPopoverSection">
                       <div className="topicPopoverLabel">{copy.topic.foundationPath}</div>
                       <div className="topicPopoverPath">
-                        {(pathTitles.length > 0 ? pathTitles : [selectedTopic.title]).map((title, index, all) => (
-                          <span key={`${title}-${index}`} className={index === all.length - 1 ? "topicPopoverPathCurrent" : undefined}>{title}</span>
-                        ))}
+                        {(pathEntries.length > 0 ? pathEntries : [{ id: selectedTopic.id, title: selectedTopic.title }]).map((entry, index, all) => {
+                          const isCurrent = index === all.length - 1 || entry.id === selectedTopic.id;
+                          return isCurrent ? (
+                            <span key={`${entry.id}-${index}`} className="topicPopoverPathCurrent">{entry.title}</span>
+                          ) : (
+                            <span key={`${entry.id}-${index}`}>
+                              <button
+                                className="topicPopoverJumpLink"
+                                onPointerDown={(event) => event.stopPropagation()}
+                                onClick={() => handleSelectTopic(entry.id, null)}
+                                type="button"
+                              >
+                                {entry.title}
+                              </button>
+                            </span>
+                          );
+                        })}
                       </div>
                     </div>
                     <div className="topicPopoverSection">
@@ -1452,9 +1466,19 @@ export function WorkspaceShell(props: WorkspaceShellProps): React.JSX.Element {
                         ) : (
                           <div className="topicPopoverCopy">
                             {copy.closure.blockedBy}{" "}
-                            {selectedClosureStatus.blocked_prerequisite_ids
-                              .map((topicId) => topicTitlesById.get(topicId) ?? topicId)
-                              .join(" · ")}
+                            {selectedClosureStatus.blocked_prerequisite_ids.map((topicId, index) => (
+                              <React.Fragment key={topicId}>
+                                {index > 0 ? " · " : null}
+                                <button
+                                  className="topicPopoverJumpLink"
+                                  onPointerDown={(event) => event.stopPropagation()}
+                                  onClick={() => handleSelectTopic(topicId, null)}
+                                  type="button"
+                                >
+                                  {topicTitlesById.get(topicId) ?? topicId}
+                                </button>
+                              </React.Fragment>
+                            ))}
                           </div>
                         )}
                         {quizError ? <div className="topicPopoverNotice topicPopoverNoticeBad">{quizError}</div> : null}
