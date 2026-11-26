@@ -256,6 +256,9 @@ export const APP_COPY_ZH_CN = {
     keyFilesRemove: "移除",
     keyFilesAddFailed: "无法标记该重点文件。",
     keyFilesRemoveFailed: "无法移除该重点文件。",
+    quoteSelection: "引用追问",
+    quotedLabel: "引用内容",
+    clearQuote: "取消引用",
   },
   settingsPanel: {
     preferences: "偏好设置",

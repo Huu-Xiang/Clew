@@ -16,6 +16,7 @@ export type MemoryMode = (typeof MEMORY_MODES)[number];
 
 export type GraphChatState = {
   input: string;
+  quotedText?: string | null;
   messages: ChatMessage[];
   sessionId?: string;
   runId?: string | null;

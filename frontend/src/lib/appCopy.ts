@@ -254,6 +254,9 @@ export const APP_COPY = {
     keyFilesRemove: "Unpin",
     keyFilesAddFailed: "Could not pin key file.",
     keyFilesRemoveFailed: "Could not remove key file.",
+    quoteSelection: "Ask about this",
+    quotedLabel: "Replying to",
+    clearQuote: "Remove quote",
   },
   settingsPanel: {
     preferences: "Preferences",

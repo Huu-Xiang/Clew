@@ -3,6 +3,7 @@ import { API_BASE } from "../lib/api";
 import { activeChatSessionStorageKey, readStoredActiveChatSession } from "../lib/appStatePersistence";
 import { apiFetch, readErrorMessage } from "../lib/apiRequest";
 import { makeMessageId } from "../lib/appUiHelpers";
+import { formatQuotedPrompt } from "../lib/chatQuote";
 import { fetchChatSessions } from "../lib/chatRequests";
 import { activeAgentStatus, consumeAgentEvents, parseChatMessage, parseChatThread, reduceAgentEvent, stateFromThread, upsertChatMessage } from "../lib/agentEvents";
 import type { AppCopy } from "../lib/appCopy";
@@ -139,14 +140,24 @@ export function useGraphChatController({ activeGraph, selectedTopicId, selectedC
 
   const sendChat = useCallback(async (overridePrompt?: string, options?: { hiddenUserMessage?: boolean; baseMessages?: ChatMessage[] }) => {
     const state = statesRef.current[key] ?? empty();
-    const prompt = (overridePrompt ?? state.input).trim();
-    if (!mounted.current || !graphId || !prompt || busy.current.has(key) || activeAgentStatus(state.status)) return;
+    const rawPrompt = (overridePrompt ?? state.input).trim();
+    const activeQuote = overridePrompt === undefined ? (state.quotedText ?? null) : null;
+    const prompt = formatQuotedPrompt(activeQuote, rawPrompt);
+    if (!mounted.current || !graphId || !rawPrompt || busy.current.has(key) || activeAgentStatus(state.status)) return;
     if (activeSessionId && !topicBindings.current.has(key)) {
       update(key, (current) => ({ ...current, error: current.error ?? copyRef.current.sessions.reconnectBeforeSend }));
       return;
     }
     const user: ChatMessage = { id: makeMessageId(), role: "user", content: prompt, hidden: options?.hiddenUserMessage ?? false, created_at: new Date().toISOString() };
-    update(key, (current) => ({ ...current, input: user.hidden ? current.input : "", runId: null, status: "starting", error: null, messages: [...current.messages, user] }));
+    update(key, (current) => ({
+      ...current,
+      input: user.hidden ? current.input : "",
+      quotedText: user.hidden ? current.quotedText : null,
+      runId: null,
+      status: "starting",
+      error: null,
+      messages: [...current.messages, user],
+    }));
     streams.current.get(key)?.abort();
     const controller = new AbortController();
     streams.current.set(key, controller);
@@ -166,7 +177,11 @@ export function useGraphChatController({ activeGraph, selectedTopicId, selectedC
       if (!controller.signal.aborted) update(key, (current) => ({ ...current,
         status: rejected ? "failed" : current.status,
         error: cause instanceof Error ? cause.message : copyRef.current.errors.loadChat,
-        ...(rejected ? { input: user.hidden ? current.input : current.input || prompt, messages: current.messages.filter((message) => message.id !== user.id) } : {}),
+        ...(rejected ? {
+          input: user.hidden ? current.input : current.input || rawPrompt,
+          quotedText: user.hidden ? current.quotedText : current.quotedText ?? activeQuote,
+          messages: current.messages.filter((message) => message.id !== user.id),
+        } : {}),
       }));
     } finally {
       if (busy.current.get(key) === controller) busy.current.delete(key);

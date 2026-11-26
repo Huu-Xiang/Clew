@@ -1,9 +1,10 @@
 import React from "react";
-import { ArrowCounterClockwise, Check } from "@phosphor-icons/react";
+import { ArrowCounterClockwise, Check, Quotes } from "@phosphor-icons/react";
 
 import type { GraphChatState } from "../../lib/appContracts";
 import type { AppCopy } from "../../lib/appCopy";
 import { renderDisplayText } from "../../lib/appUiHelpers";
+import { normalizeQuotedText } from "../../lib/chatQuote";
 import { summarizePreviewCounts, summarizeTopOperations } from "../../lib/graph";
 import { AgentInteraction, type AgentControls } from "./AgentInteraction";
 import { AssistantMarkdown } from "./AssistantMarkdown";
@@ -53,6 +54,47 @@ export function AssistantThread({
   const replies = groupChatReplies(visibleMessages);
   const activeReplyId = chatLoading && replies.some((reply) => reply.role === "assistant" && reply.id === currentChatState.runId)
     ? currentChatState.runId : null;
+  const [selectionQuote, setSelectionQuote] = React.useState<{ text: string; top: number; left: number } | null>(null);
+
+  React.useEffect(() => {
+    const viewport = chatViewportRef.current;
+    if (!viewport) return;
+    const syncSelection = () => {
+      const selection = window.getSelection();
+      if (!selection || selection.isCollapsed || selection.rangeCount === 0) {
+        setSelectionQuote(null);
+        return;
+      }
+      const text = normalizeQuotedText(selection.toString());
+      if (!text) {
+        setSelectionQuote(null);
+        return;
+      }
+      const range = selection.getRangeAt(0);
+      const container = range.commonAncestorContainer;
+      const anchorEl = container.nodeType === Node.ELEMENT_NODE ? (container as Element) : container.parentElement;
+      if (!anchorEl || !viewport.contains(anchorEl) || !anchorEl.closest(".chatMessage-assistant")) {
+        setSelectionQuote(null);
+        return;
+      }
+      const rect = range.getBoundingClientRect();
+      if (rect.width === 0 && rect.height === 0) {
+        setSelectionQuote(null);
+        return;
+      }
+      const left = Math.min(Math.max(rect.left + rect.width / 2, 72), window.innerWidth - 72);
+      const top = Math.max(rect.top - 36, 12);
+      setSelectionQuote({ text, top, left });
+    };
+    const clearSelectionQuote = () => setSelectionQuote(null);
+    document.addEventListener("selectionchange", syncSelection);
+    viewport.addEventListener("scroll", clearSelectionQuote, { passive: true });
+    return () => {
+      document.removeEventListener("selectionchange", syncSelection);
+      viewport.removeEventListener("scroll", clearSelectionQuote);
+    };
+  }, [chatViewportRef]);
+
   // The thread unmounts when the chat window closes; reopening it starts at the latest message.
   React.useLayoutEffect(() => {
     const viewport = chatViewportRef.current;
@@ -60,6 +102,24 @@ export function AssistantThread({
   }, [chatViewportRef]);
   return (
     <div ref={chatViewportRef} className="assistantThread">
+      {selectionQuote ? (
+        <button
+          className="chatSelectionQuoteBtn"
+          style={{ top: `${selectionQuote.top}px`, left: `${selectionQuote.left}px` }}
+          onMouseDown={(event) => event.preventDefault()}
+          onClick={() => {
+            const picked = selectionQuote.text;
+            updateCurrentChatState((current) => ({ ...current, quotedText: picked }));
+            window.getSelection()?.removeAllRanges();
+            setSelectionQuote(null);
+            window.requestAnimationFrame(() => chatComposerRef.current?.focus());
+          }}
+          type="button"
+        >
+          <Quotes size={13} weight="bold" aria-hidden="true" />
+          <span>{copy.sessions.quoteSelection}</span>
+        </button>
+      ) : null}
       {chatThreadLoading ? (
         <div className="assistantHello assistantHelloLoading">
           <ClewLoader size={56} label={copy.sessions.loadingThread} />

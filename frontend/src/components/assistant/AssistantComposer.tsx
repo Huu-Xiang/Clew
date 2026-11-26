@@ -1,4 +1,5 @@
 import React from "react";
+import { Quotes, X } from "@phosphor-icons/react";
 import type { AgentControls } from "./AgentInteraction";
 
 import type { GraphChatState } from "../../lib/appContracts";
@@ -74,6 +75,26 @@ export function AssistantComposer({
           </button>
         ))}
       </div>
+      {currentChatState.quotedText ? (
+        <div className="composerQuoteBar">
+          <div className="composerQuoteContent">
+            <div className="composerQuoteLabel">
+              <Quotes size={12} weight="bold" aria-hidden="true" />
+              <span>{copy.sessions.quotedLabel}</span>
+            </div>
+            <div className="composerQuoteText">{currentChatState.quotedText}</div>
+          </div>
+          <button
+            className="composerQuoteClear"
+            onClick={() => updateCurrentChatState((current) => ({ ...current, quotedText: null }))}
+            aria-label={copy.sessions.clearQuote}
+            title={copy.sessions.clearQuote}
+            type="button"
+          >
+            <X size={12} weight="bold" aria-hidden="true" />
+          </button>
+        </div>
+      ) : null}
       <div className="assistantComposer">
         <textarea
           ref={chatComposerRef}

@@ -827,3 +827,86 @@
 .topicPopoverJumpLink:hover {
   text-decoration-color: var(--ui-primary);
 }
+
+/* Selection quote reply */
+
+.chatSelectionQuoteBtn {
+  position: fixed;
+  z-index: 60;
+  transform: translateX(-50%);
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 28px;
+  padding: 0 11px;
+  border: 1px solid var(--ui-line-strong);
+  border-radius: var(--ui-radius-pill);
+  background: var(--ui-surface, var(--ui-fill-2));
+  color: var(--ui-fg);
+  font: 600 var(--ui-text-xs)/1 var(--sans);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.16);
+  cursor: pointer;
+  transition: transform 0.12s ease, background 0.12s ease;
+}
+
+.chatSelectionQuoteBtn:hover {
+  background: var(--ui-fill-3);
+  transform: translateX(-50%) translateY(-1px);
+}
+
+.composerQuoteBar {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--ui-line);
+  border-left: 3px solid var(--ui-primary);
+  border-radius: 10px;
+  background: var(--ui-fill-1);
+}
+
+.composerQuoteContent {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.composerQuoteLabel {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--ui-primary);
+  margin-bottom: 2px;
+}
+
+.composerQuoteText {
+  font-size: var(--ui-text-xs);
+  line-height: 1.45;
+  color: var(--ui-fg-2);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  white-space: pre-wrap;
+}
+
+.composerQuoteClear {
+  flex: 0 0 auto;
+  display: inline-grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--ui-fg-3);
+  cursor: pointer;
+}
+
+.composerQuoteClear:hover {
+  background: var(--ui-fill-2);
+  color: var(--ui-fg);
+}
