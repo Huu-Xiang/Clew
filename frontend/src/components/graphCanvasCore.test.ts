@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import { buildAnchorMap, buildZoneContour, edgeRenderMotion, idleRenderOffset, nextIdleMotionState, zoneIdByTopicId } from "./graphCanvasCore";
-import type { Zone } from "../lib/types";
+import { buildAnchorMap, buildZoneContour, dedupeRenderEdges, edgeRenderMotion, idleRenderOffset, nextIdleMotionState, zoneIdByTopicId } from "./graphCanvasCore";
+import type { Edge, Zone } from "../lib/types";
 
 describe("overlapping zones", () => {
   it("prefers the smallest zone, then strongest intensity, retaining first-on-tie order", () => {
@@ -220,5 +220,18 @@ describe("edgeRenderMotion", () => {
         litFrame: 100,
       }).brightness,
     ).toBe(1);
+  });
+});
+
+describe("dedupeRenderEdges", () => {
+  it("keeps one primary edge per unordered node pair, preferring path edges then stronger relations", () => {
+    const edges = [
+      { id: "e-support", source_topic_id: "a", target_topic_id: "b", relation: "supports", rationale: "" },
+      { id: "e-req", source_topic_id: "a", target_topic_id: "b", relation: "requires", rationale: "" },
+      { id: "e-rev", source_topic_id: "b", target_topic_id: "a", relation: "reviews", rationale: "" },
+      { id: "e-other", source_topic_id: "b", target_topic_id: "c", relation: "extends", rationale: "" },
+    ] as Edge[];
+    expect(dedupeRenderEdges(edges, new Set()).map((edge) => edge.id)).toEqual(["e-req", "e-other"]);
+    expect(dedupeRenderEdges(edges, new Set(["e-rev"])).map((edge) => edge.id)).toEqual(["e-rev", "e-other"]);
   });
 });

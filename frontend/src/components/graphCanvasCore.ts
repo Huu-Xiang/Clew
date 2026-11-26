@@ -195,6 +195,32 @@ export function nodeFillColor(node: GraphNode, selected: boolean, onPath: boolea
   return palette.nodeDefaultFill;
 }
 
+const EDGE_RELATION_PRIORITY: Record<Edge["relation"], number> = {
+  requires: 5,
+  extends: 4,
+  supports: 3,
+  bridges: 2,
+  reviews: 1,
+};
+
+/** Keep one primary edge per unordered node pair for cleaner canvas rendering. */
+export function dedupeRenderEdges(edges: Edge[], pathEdgeIds: Set<string>): Edge[] {
+  const bestByPair = new Map<string, { edge: Edge; score: number; index: number }>();
+  edges.forEach((edge, index) => {
+    const a = edge.source_topic_id;
+    const b = edge.target_topic_id;
+    const pairKey = a < b ? `${a}\0${b}` : `${b}\0${a}`;
+    const score = (pathEdgeIds.has(edge.id) ? 100 : 0) + (EDGE_RELATION_PRIORITY[edge.relation] ?? 0) * 10;
+    const existing = bestByPair.get(pairKey);
+    if (!existing || score > existing.score) {
+      bestByPair.set(pairKey, { edge, score, index });
+    }
+  });
+  return Array.from(bestByPair.values())
+    .sort((left, right) => left.index - right.index)
+    .map((entry) => entry.edge);
+}
+
 export function nodeRadius(node: GraphNode, selected: boolean, onPath: boolean, isRoot: boolean): number {
   if (selected) return 8;
   if (onPath) return 7;

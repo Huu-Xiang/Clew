@@ -11,6 +11,7 @@ import {
   cacheEntryKey,
   clamp,
   cloneManualNodePositions,
+  dedupeRenderEdges,
   edgeRenderMotion,
   graphCanvasPalette,
   hashString,
@@ -1167,10 +1168,11 @@ function GraphCanvasComponent({
         });
       }
       const edgePositions = idleVisualMotionEnabled ? positions : renderPositions;
+      const renderEdges = dedupeRenderEdges(currentEdges, pathEdgeIdsRef.current);
       const bundleMetaByEdgeId = new Map<string, { angle: number; laneOffset: number; laneCount: number }>();
 
       const outgoingBySource = new Map<string, Array<{ edge: Edge; angle: number }>>();
-      for (const edge of currentEdges) {
+      for (const edge of renderEdges) {
         const from = edgePositions.get(edge.source_topic_id);
         const to = edgePositions.get(edge.target_topic_id);
         if (!from || !to) continue;
@@ -1196,7 +1198,7 @@ function GraphCanvasComponent({
         });
       }
 
-      for (const edge of currentEdges) {
+      for (const edge of renderEdges) {
         const from = edgePositions.get(edge.source_topic_id);
         const to = edgePositions.get(edge.target_topic_id);
         if (!from || !to) continue;
@@ -1390,9 +1392,10 @@ function GraphCanvasComponent({
       });
 
       ctx2.save();
-      ctx2.font = "10px 'Berkeley Mono', 'JetBrains Mono', monospace";
+      ctx2.font = "500 12px -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Segoe UI', 'Inter', sans-serif";
       ctx2.textAlign = "center";
       ctx2.textBaseline = "middle";
+      const hasSelection = selectedTopicIdRef.current !== null;
 
       for (const node of labelNodes) {
         const position = renderPositions.get(node.id);
@@ -1410,7 +1413,10 @@ function GraphCanvasComponent({
         const brightness = litFrame === undefined ? 0 : Math.min(1, Math.max(0, (frameCount - litFrame) / fadeRate));
         if (brightness < 0.1) continue;
         const radius = nodeRadius(node, selected, onPath, isRoot);
-        const alpha = (selected ? 0.96 : onPath ? 0.76 : contextual ? 0.48 : 0.22) * brightness;
+        const baseAlpha = hasSelection
+          ? (selected ? 0.96 : onPath ? 0.92 : contextual ? 0.72 : 0.42)
+          : 0.82;
+        const alpha = baseAlpha * brightness;
         const textWidth = ctx2.measureText(node.title).width;
         const candidates = [
           { x: position.x, y: position.y - radius - 12 },
