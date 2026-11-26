@@ -20,6 +20,7 @@ import {
 import { readErrorMessage, type apiFetch } from "../lib/apiRequest";
 import { renderDisplayText, safeExternalUrl, type ManualLayoutPositions, type PopoverPosition } from "../lib/appUiHelpers";
 import type { AppCopy } from "../lib/appCopy";
+import type { CanvasStylePreferences } from "../lib/canvasStyle";
 import { formatMinutes, getTopicStateTone } from "../lib/graph";
 import { useModalAccessibility } from "../lib/useModalAccessibility";
 import { GraphCanvas } from "./GraphCanvas";
@@ -138,6 +139,7 @@ type WorkspaceChromeProps = {
   viewportCenteredZoom: boolean;
   setViewportCenteredZoom: StateSetter<boolean>;
   straightEdgeLinesEnabled: boolean;
+  canvasStyle?: CanvasStylePreferences;
   topOverlayCompact: boolean;
   overlayLeftOffset: number;
   overlayRightOffset: number;
@@ -295,6 +297,7 @@ export function WorkspaceShell(props: WorkspaceShellProps): React.JSX.Element {
     viewportCenteredZoom,
     setViewportCenteredZoom,
     straightEdgeLinesEnabled,
+    canvasStyle,
     topOverlayCompact,
     overlayLeftOffset,
     overlayRightOffset,
@@ -1254,6 +1257,7 @@ export function WorkspaceShell(props: WorkspaceShellProps): React.JSX.Element {
                     disableIdleAnimations={liveDisableIdleAnimations}
                     viewportCenteredWheelZoom={viewportCenteredZoom}
                     curvedEdgeLinesEnabled={!straightEdgeLinesEnabled}
+                    canvasStyle={canvasStyle}
                     themeMode={themeMode}
                     backgroundFill={graphCanvasBackgroundFill}
                   />

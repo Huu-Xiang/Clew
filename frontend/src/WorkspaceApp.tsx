@@ -17,6 +17,7 @@ import {
   type WorkspaceSurfacePayload,
 } from "./lib/appContracts";
 import { COMPACT_TOP_OVERLAY_THRESHOLD } from "./lib/appStatePersistence";
+import { readStoredCanvasStyle, writeStoredCanvasStyle, type CanvasStylePreferences } from "./lib/canvasStyle";
 import { apiFetch, readErrorMessage } from "./lib/apiRequest";
 import { type ManualLayoutPositions, readManualLayoutPositions } from "./lib/appUiHelpers";
 import {
@@ -139,6 +140,10 @@ export default function WorkspaceApp({ chatgpt, ...preference }: { chatgpt: Chat
     }
   });
   const [applyLoadingMessageId, setApplyLoadingMessageId] = useState<string | null>(null);
+  const [canvasStyle, setCanvasStyle] = useState<CanvasStylePreferences>(readStoredCanvasStyle);
+  useEffect(() => {
+    writeStoredCanvasStyle(canvasStyle);
+  }, [canvasStyle]);
   const [distillSummaryLoadingId, setDistillSummaryLoadingId] = useState<string | null>(null);
   const [revertLoadingMessageId, setRevertLoadingMessageId] = useState<string | null>(null);
   const pendingDistillRef = useRef<{ sessionId: string; prompt: string } | null>(null);
@@ -1449,6 +1454,7 @@ export default function WorkspaceApp({ chatgpt, ...preference }: { chatgpt: Chat
           viewportCenteredZoom,
           setViewportCenteredZoom,
           straightEdgeLinesEnabled,
+          canvasStyle,
           topOverlayCompact,
           overlayLeftOffset,
           overlayRightOffset,
@@ -1574,6 +1580,8 @@ export default function WorkspaceApp({ chatgpt, ...preference }: { chatgpt: Chat
         activeGraph={activeGraph}
         addMaterialSource={addMaterialSource}
         removeMaterialSource={removeMaterialSource}
+        canvasStyle={canvasStyle}
+        setCanvasStyle={setCanvasStyle}
         loadSnapshots={loadSnapshots}
         historyLoading={historyLoading}
         historyError={historyError}

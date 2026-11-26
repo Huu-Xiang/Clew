@@ -910,3 +910,37 @@
   background: var(--ui-fill-2);
   color: var(--ui-fg);
 }
+
+/* Canvas style sliders in settings */
+
+.canvasStyleSliders {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.canvasStyleSliderRow {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.canvasStyleSliderHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.canvasStyleSliderVal {
+  font-size: var(--ui-text-xs);
+  font-variant-numeric: tabular-nums;
+  color: var(--ui-fg-2);
+}
+
+.canvasStyleRange {
+  width: 100%;
+  accent-color: var(--ui-primary);
+  cursor: pointer;
+}

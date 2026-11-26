@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef } from "react";
 
 import type { Edge, Topic, Zone } from "../lib/types";
+import { DEFAULT_CANVAS_STYLE, type CanvasStylePreferences } from "../lib/canvasStyle";
 import {
   ZONE_GEOMETRY_REFRESH_FRAMES,
   ZONE_REVEAL_DURATION_FRAMES,
@@ -423,6 +424,7 @@ function GraphCanvasComponent({
   disablePhysics = false,
   viewportCenteredWheelZoom = false,
   curvedEdgeLinesEnabled = true,
+  canvasStyle = DEFAULT_CANVAS_STYLE,
 }: {
   topics: Topic[];
   edges: Edge[];
@@ -451,6 +453,7 @@ function GraphCanvasComponent({
   disablePhysics?: boolean;
   viewportCenteredWheelZoom?: boolean;
   curvedEdgeLinesEnabled?: boolean;
+  canvasStyle?: CanvasStylePreferences;
 }
 ): React.JSX.Element {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -475,6 +478,7 @@ function GraphCanvasComponent({
   const disableGridRef = useRef<boolean>(disableGrid);
   const viewportCenteredWheelZoomRef = useRef<boolean>(viewportCenteredWheelZoom ?? false);
   const curvedEdgeLinesEnabledRef = useRef<boolean>(curvedEdgeLinesEnabled);
+  const canvasStyleRef = useRef<CanvasStylePreferences>(canvasStyle);
   const paletteRef = useRef<GraphCanvasPalette>(graphCanvasPalette(themeMode));
   const backgroundFillRef = useRef<string | null>(backgroundFill);
   const onSelectTopicRef = useRef(onSelectTopic);
@@ -490,6 +494,7 @@ function GraphCanvasComponent({
   paletteRef.current = graphCanvasPalette(themeMode);
   themeModeRef.current = themeMode;
   curvedEdgeLinesEnabledRef.current = curvedEdgeLinesEnabled;
+  canvasStyleRef.current = canvasStyle;
 
   // Animate zoom toward the requested target.
   useEffect(() => {
@@ -913,7 +918,7 @@ function GraphCanvasComponent({
         ctx2.beginPath();
         ctx2.arc(center.x, center.y, spread, 0, Math.PI * 2);
         ctx2.fill();
-        if (paletteRef.current.zoneOutlineAlpha > 0 && contour.length >= 2) {
+        if (canvasStyleRef.current.showZoneOutlines && paletteRef.current.zoneOutlineAlpha > 0 && contour.length >= 2) {
           ctx2.save();
           ctx2.setLineDash([10, 8]);
           ctx2.lineWidth = paletteRef.current.zoneOutlineWidth;
@@ -1256,14 +1261,14 @@ function GraphCanvasComponent({
           } else {
             ctx2.strokeStyle = `rgba(${paletteRef.current.edgeRgb},${Math.max(0.04, pulse * edgeBrightness)})`;
           }
-          ctx2.lineWidth = 1.7;
+          ctx2.lineWidth = Math.max(1.7, canvasStyleRef.current.edgeWidth + 0.5);
         } else if (onFrontier) {
           ctx2.setLineDash([7, 9]);
-          ctx2.strokeStyle = `rgba(${paletteRef.current.edgeRgb},${0.012 + 0.05 * edgeBrightness})`;
-          ctx2.lineWidth = 1;
+          ctx2.strokeStyle = `rgba(${paletteRef.current.edgeRgb},${canvasStyleRef.current.edgeOpacity * edgeBrightness})`;
+          ctx2.lineWidth = canvasStyleRef.current.edgeWidth;
         } else {
-          ctx2.strokeStyle = `rgba(${paletteRef.current.edgeRgb},${0.012 + 0.05 * edgeBrightness})`;
-          ctx2.lineWidth = 1;
+          ctx2.strokeStyle = `rgba(${paletteRef.current.edgeRgb},${canvasStyleRef.current.edgeOpacity * edgeBrightness})`;
+          ctx2.lineWidth = canvasStyleRef.current.edgeWidth;
         }
         ctx2.stroke();
         if (onFrontier) {
@@ -1392,7 +1397,8 @@ function GraphCanvasComponent({
       });
 
       ctx2.save();
-      ctx2.font = "500 12px -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Segoe UI', 'Inter', sans-serif";
+      const activeCanvasStyle = canvasStyleRef.current;
+      ctx2.font = `500 ${activeCanvasStyle.labelFontSize}px -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Segoe UI', 'Inter', sans-serif`;
       ctx2.textAlign = "center";
       ctx2.textBaseline = "middle";
       const hasSelection = selectedTopicIdRef.current !== null;
@@ -1414,8 +1420,8 @@ function GraphCanvasComponent({
         if (brightness < 0.1) continue;
         const radius = nodeRadius(node, selected, onPath, isRoot);
         const baseAlpha = hasSelection
-          ? (selected ? 0.96 : onPath ? 0.92 : contextual ? 0.72 : 0.42)
-          : 0.82;
+          ? (selected ? 0.96 : onPath ? Math.min(1, activeCanvasStyle.labelOpacity + 0.1) : contextual ? activeCanvasStyle.labelOpacity * 0.85 : activeCanvasStyle.labelOpacity * 0.52)
+          : activeCanvasStyle.labelOpacity;
         const alpha = baseAlpha * brightness;
         const textWidth = ctx2.measureText(node.title).width;
         const candidates = [
@@ -1844,6 +1850,7 @@ export const GraphCanvas = React.memo(GraphCanvasComponent, (prev, next) => {
   if (prev.disablePhysics !== next.disablePhysics) return false;
   if (prev.viewportCenteredWheelZoom !== next.viewportCenteredWheelZoom) return false;
   if (prev.curvedEdgeLinesEnabled !== next.curvedEdgeLinesEnabled) return false;
+  if (prev.canvasStyle !== next.canvasStyle) return false;
   if (prev.cascadeStepFrames !== next.cascadeStepFrames) return false;
   if (prev.onSelectTopic !== next.onSelectTopic) return false;
   if (prev.onSelectedTopicAnchorChange !== next.onSelectedTopicAnchorChange) return false;

@@ -9,6 +9,7 @@ import type { ChatGPTAccountController } from "../hooks/useChatGPTAccount";
 import { MEMORY_MODES, type SettingsDraftSetters, type SettingsDrafts } from "../lib/appContracts";
 import type { LocalePreference } from "../lib/appLocale";
 import type { AppCopy } from "../lib/appCopy";
+import { DEFAULT_CANVAS_STYLE, type CanvasStylePreferences } from "../lib/canvasStyle";
 import type { GraphEnvelope, SnapshotRecord, WorkspaceConfig, WorkspaceEnvelope } from "../lib/types";
 import { useModalAccessibility } from "../lib/useModalAccessibility";
 
@@ -33,6 +34,8 @@ type SettingsModalProps = LocalePreference & {
   saveSettings: () => void;
   addMaterialSource?: (path: string, label?: string) => Promise<void>;
   removeMaterialSource?: (sourceId: string) => Promise<void>;
+  canvasStyle?: CanvasStylePreferences;
+  setCanvasStyle?: React.Dispatch<React.SetStateAction<CanvasStylePreferences>>;
 };
 
 export function SettingsModal(props: SettingsModalProps): React.JSX.Element | null {
@@ -58,6 +61,8 @@ export function SettingsModal(props: SettingsModalProps): React.JSX.Element | nu
     saveSettings,
     addMaterialSource,
     removeMaterialSource,
+    canvasStyle,
+    setCanvasStyle,
   } = props;
   const [materialPathDraft, setMaterialPathDraft] = React.useState("");
   const [materialLabelDraft, setMaterialLabelDraft] = React.useState("");
@@ -152,6 +157,94 @@ export function SettingsModal(props: SettingsModalProps): React.JSX.Element | nu
                   <SwitchRow title={copy.settingsPanel.edgeLines} help={copy.settingsPanel.edgeLinesHelp} checked={straightEdgeLinesDraft} onChange={setStraightEdgeLinesDraft} />
                 </div>
               </section>
+
+              {canvasStyle && setCanvasStyle ? (
+                <section className="stSection">
+                  <SectionHead
+                    eyebrow={copy.settingsPanel.canvasStyleEyebrow}
+                    title={copy.settingsPanel.canvasStyleTitle}
+                    action={(
+                      <button
+                        className="uiButton uiButtonQuiet uiButtonSmall"
+                        onClick={() => setCanvasStyle({ ...DEFAULT_CANVAS_STYLE })}
+                        type="button"
+                      >
+                        {copy.settingsPanel.canvasStyleReset}
+                      </button>
+                    )}
+                  />
+                  <div className="canvasStyleSliders">
+                    <label className="canvasStyleSliderRow">
+                      <span className="canvasStyleSliderHead">
+                        <span className="uiLabel">{copy.settingsPanel.canvasFontSize}</span>
+                        <span className="canvasStyleSliderVal">{canvasStyle.labelFontSize}px</span>
+                      </span>
+                      <input
+                        className="canvasStyleRange"
+                        type="range"
+                        min={10}
+                        max={18}
+                        step={1}
+                        value={canvasStyle.labelFontSize}
+                        onChange={(event) => setCanvasStyle((current) => ({ ...current, labelFontSize: Number(event.target.value) }))}
+                      />
+                    </label>
+                    <label className="canvasStyleSliderRow">
+                      <span className="canvasStyleSliderHead">
+                        <span className="uiLabel">{copy.settingsPanel.canvasLabelOpacity}</span>
+                        <span className="canvasStyleSliderVal">{Math.round(canvasStyle.labelOpacity * 100)}%</span>
+                      </span>
+                      <input
+                        className="canvasStyleRange"
+                        type="range"
+                        min={0.3}
+                        max={1}
+                        step={0.05}
+                        value={canvasStyle.labelOpacity}
+                        onChange={(event) => setCanvasStyle((current) => ({ ...current, labelOpacity: Number(event.target.value) }))}
+                      />
+                    </label>
+                    <label className="canvasStyleSliderRow">
+                      <span className="canvasStyleSliderHead">
+                        <span className="uiLabel">{copy.settingsPanel.canvasEdgeOpacity}</span>
+                        <span className="canvasStyleSliderVal">{Math.round(canvasStyle.edgeOpacity * 100)}%</span>
+                      </span>
+                      <input
+                        className="canvasStyleRange"
+                        type="range"
+                        min={0.06}
+                        max={0.65}
+                        step={0.02}
+                        value={canvasStyle.edgeOpacity}
+                        onChange={(event) => setCanvasStyle((current) => ({ ...current, edgeOpacity: Number(event.target.value) }))}
+                      />
+                    </label>
+                    <label className="canvasStyleSliderRow">
+                      <span className="canvasStyleSliderHead">
+                        <span className="uiLabel">{copy.settingsPanel.canvasEdgeWidth}</span>
+                        <span className="canvasStyleSliderVal">{canvasStyle.edgeWidth.toFixed(1)}px</span>
+                      </span>
+                      <input
+                        className="canvasStyleRange"
+                        type="range"
+                        min={0.8}
+                        max={3}
+                        step={0.2}
+                        value={canvasStyle.edgeWidth}
+                        onChange={(event) => setCanvasStyle((current) => ({ ...current, edgeWidth: Number(event.target.value) }))}
+                      />
+                    </label>
+                  </div>
+                  <div className="uiRows">
+                    <SwitchRow
+                      title={copy.settingsPanel.canvasZoneOutlines}
+                      help={copy.settingsPanel.canvasZoneOutlinesHelp}
+                      checked={canvasStyle.showZoneOutlines}
+                      onChange={(checked) => setCanvasStyle((current) => ({ ...current, showZoneOutlines: checked }))}
+                    />
+                  </div>
+                </section>
+              ) : null}
 
               <section className="stSection">
                 <SectionHead eyebrow={copy.settingsPanel.aiBehavior} title={copy.settingsPanel.memory} />
