@@ -751,3 +751,62 @@
 .topicPopoverDistillBtn:hover {
   background: var(--ui-fill-3);
 }
+
+.topicKeyFileForm {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.topicKeyFileFormActions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.topicKeyFileRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 8px;
+  border: 1px solid var(--ui-line);
+  border-radius: 8px;
+  background: var(--ui-fill-1);
+}
+
+.topicKeyFileMeta {
+  min-width: 0;
+}
+
+.topicKeyFilePath {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11.5px;
+  color: var(--ui-fg);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.topicKeyFileSub {
+  font-size: 11px;
+  color: var(--ui-fg-3);
+}
+
+.topicKeyFileRemove {
+  flex: 0 0 auto;
+  display: inline-grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--ui-fg-3);
+  cursor: pointer;
+}
+
+.topicKeyFileRemove:hover:not(:disabled) {
+  background: var(--ui-fill-2);
+  color: var(--ui-fg);
+}

@@ -157,8 +157,11 @@ class AgentRuntime:
         if not closure.can_award_completion:
             raise ValueError("Close prerequisite topics before taking this completion test.")
         selected = await self._select_model(model)
+        quiz_prompt = f"Prepare a closure quiz for topic {topic_id}: exactly {question_count} questions. Call create_closure_quiz with the questions."
+        if graph.material_sources:
+            quiz_prompt += " This graph has bound local materials; inspect the topic's key_files or search/read relevant files first so questions test concrete implementation details and real material concepts."
         run = AgentRun(id=uuid4().hex, graph_id=graph_id, session_id=None, model=selected,
-                       request=GraphChatRequest(prompt=f"Prepare a closure quiz for topic {topic_id}: exactly {question_count} questions. Call create_closure_quiz with the questions.", selected_topic_id=topic_id),
+                       request=GraphChatRequest(prompt=quiz_prompt, selected_topic_id=topic_id),
                        done=asyncio.get_running_loop().create_future(), quiz_topic_id=topic_id, quiz_count=question_count)
         self.runs[run.id] = run
         run.task = asyncio.create_task(self._execute(run, []))
@@ -247,7 +250,8 @@ class AgentRuntime:
         try:
             run.model = await self._select_model(run.request.model or run.model or None)
             config = self.repository.current().workspace.config
-            tools = tool_specs(CLOSURE_QUIZ_TOOLS if run.session_id is None else None)
+            has_materials = bool(self.repository.graph(run.graph_id).material_sources)
+            tools = tool_specs(CLOSURE_QUIZ_TOOLS if run.session_id is None else None, include_materials=has_materials)
             # Chat turns may search the web; the model decides when. Quiz generation stays offline.
             if run.session_id is not None:
                 tools.append({"type": "web_search"})

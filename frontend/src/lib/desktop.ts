@@ -10,6 +10,7 @@ export interface ClewDesktop {
   setLocale(locale: AppLocale): Promise<void>;
   openExternal(url: string): Promise<void>;
   exportObsidian(exportPackage: ObsidianGraphExportPackagePayload): Promise<boolean>;
+  pickMaterialFolder?(): Promise<string | null>;
 }
 
 declare global {

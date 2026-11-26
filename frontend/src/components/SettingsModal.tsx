@@ -31,6 +31,8 @@ type SettingsModalProps = LocalePreference & {
   configSaving: boolean;
   settingsDirty: boolean;
   saveSettings: () => void;
+  addMaterialSource?: (path: string, label?: string) => Promise<void>;
+  removeMaterialSource?: (sourceId: string) => Promise<void>;
 };
 
 export function SettingsModal(props: SettingsModalProps): React.JSX.Element | null {
@@ -54,7 +56,13 @@ export function SettingsModal(props: SettingsModalProps): React.JSX.Element | nu
     configSaving,
     settingsDirty,
     saveSettings,
+    addMaterialSource,
+    removeMaterialSource,
   } = props;
+  const [materialPathDraft, setMaterialPathDraft] = React.useState("");
+  const [materialLabelDraft, setMaterialLabelDraft] = React.useState("");
+  const [materialBusy, setMaterialBusy] = React.useState(false);
+  const [materialError, setMaterialError] = React.useState<string | null>(null);
   const {
     assistantNickname: assistantNicknameDraft,
     persona: personaDraft,
@@ -188,6 +196,107 @@ export function SettingsModal(props: SettingsModalProps): React.JSX.Element | nu
             </div>
 
             <div className="stColumn">
+              {activeGraph && addMaterialSource && removeMaterialSource ? (
+                <section className="stSection">
+                  <SectionHead
+                    eyebrow={copy.sessions.materialsSectionEyebrow}
+                    title={copy.sessions.materialsSectionTitle}
+                    action={window.clewDesktop?.pickMaterialFolder ? (
+                      <button
+                        className="uiButton uiButtonQuiet uiButtonSmall"
+                        disabled={materialBusy}
+                        onClick={() => {
+                          void (async () => {
+                            const picked = await window.clewDesktop?.pickMaterialFolder?.();
+                            if (picked) {
+                              setMaterialPathDraft(picked);
+                              setMaterialError(null);
+                            }
+                          })();
+                        }}
+                        type="button"
+                      >
+                        {copy.sessions.materialsPickFolder}
+                      </button>
+                    ) : undefined}
+                  />
+                  <p className="stLead">{copy.sessions.materialsHelp}</p>
+                  <label className="uiField">
+                    <input
+                      className="uiInput"
+                      value={materialPathDraft}
+                      onChange={(event) => setMaterialPathDraft(event.target.value)}
+                      placeholder={copy.sessions.materialsPathPlaceholder}
+                    />
+                  </label>
+                  <div className="stFieldPair">
+                    <input
+                      className="uiInput"
+                      value={materialLabelDraft}
+                      onChange={(event) => setMaterialLabelDraft(event.target.value)}
+                      placeholder={copy.sessions.materialsLabelPlaceholder}
+                    />
+                    <button
+                      className="uiButton uiButtonPrimary uiButtonSmall"
+                      disabled={materialBusy || !materialPathDraft.trim()}
+                      onClick={() => {
+                        void (async () => {
+                          setMaterialBusy(true);
+                          setMaterialError(null);
+                          try {
+                            await addMaterialSource(materialPathDraft.trim(), materialLabelDraft.trim() || undefined);
+                            setMaterialPathDraft("");
+                            setMaterialLabelDraft("");
+                          } catch (cause) {
+                            setMaterialError(cause instanceof Error ? cause.message : copy.sessions.materialsAddFailed);
+                          } finally {
+                            setMaterialBusy(false);
+                          }
+                        })();
+                      }}
+                      type="button"
+                    >
+                      {materialBusy ? copy.sessions.materialsAdding : copy.sessions.materialsAdd}
+                    </button>
+                  </div>
+                  {materialError ? <div className="inlineNotice inlineNoticeError">{materialError}</div> : null}
+                  {(activeGraph.material_sources?.length ?? 0) > 0 ? (
+                    <div className="stSnapshots">
+                      {(activeGraph.material_sources ?? []).map((source) => (
+                        <div key={source.id} className="stSnapshot">
+                          <div className="stSnapshotMain">
+                            <div className="stSnapshotTitle">{source.label}</div>
+                            <div className="stSnapshotMeta"><span>{source.path}</span></div>
+                          </div>
+                          <button
+                            className="uiButton uiButtonSmall"
+                            disabled={materialBusy}
+                            onClick={() => {
+                              void (async () => {
+                                setMaterialBusy(true);
+                                setMaterialError(null);
+                                try {
+                                  await removeMaterialSource(source.id);
+                                } catch (cause) {
+                                  setMaterialError(cause instanceof Error ? cause.message : copy.sessions.materialsRemoveFailed);
+                                } finally {
+                                  setMaterialBusy(false);
+                                }
+                              })();
+                            }}
+                            type="button"
+                          >
+                            {copy.sessions.materialsRemove}
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="uiHelp">{copy.sessions.materialsEmpty}</p>
+                  )}
+                </section>
+              ) : null}
+
               {activeGraph ? (
                 <section className="stSection">
                   <SectionHead

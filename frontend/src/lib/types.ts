@@ -24,6 +24,19 @@ export type Artifact = {
   created_at: string;
 };
 
+export type MaterialSource = {
+  id: string;
+  label: string;
+  path: string;
+};
+
+export type TopicKeyFile = {
+  id: string;
+  source_id: string;
+  path: string;
+  note: string;
+};
+
 export type Topic = {
   id: string;
   title: string;
@@ -36,6 +49,7 @@ export type Topic = {
   zones: string[];
   resources: ResourceLink[];
   artifacts: Artifact[];
+  key_files?: TopicKeyFile[];
   metadata?: Record<string, unknown>;
 };
 
@@ -77,6 +91,7 @@ export type GraphEnvelope = {
   topics: Topic[];
   edges: Edge[];
   zones: Zone[];
+  material_sources?: MaterialSource[];
   quiz_attempts: QuizAttempt[];
   metadata: Record<string, unknown>;
 };

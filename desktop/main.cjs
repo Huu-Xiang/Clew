@@ -97,6 +97,14 @@ async function start() {
       return await writeExport(exportPackage, choice.filePaths[0], nativeCommit({ root, resources: process.resourcesPath, packaged: app.isPackaged, python }));
     } finally { exporting = false; }
   });
+  ipcMain.handle('clew:pick-material-folder', async (event) => {
+    if (!trustedFrame(event, mainWindow?.webContents)) throw new Error('Untrusted window.');
+    const choice = await dialog.showOpenDialog(mainWindow, {
+      properties: ['openDirectory'],
+    });
+    if (choice.canceled || choice.filePaths.length !== 1) return null;
+    return choice.filePaths[0];
+  });
   mainWindow = new BrowserWindow({ width: 1400, height: 920, minWidth: 860, minHeight: 620, show: false,
     title: 'Clew', backgroundColor: '#000000', autoHideMenuBar: true,
     icon: path.join(__dirname, 'assets', 'icon.png'),

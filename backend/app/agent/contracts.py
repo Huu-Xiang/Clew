@@ -154,6 +154,25 @@ class DistillationDraft(ToolInput):
         return self
 
 
+class ListMaterialsDraft(ToolInput):
+    source_id: str | None = Field(default=None, description="Optional bound material source ID. Omit to list across all bound folders.")
+    subpath: str = Field(default="", description="Optional relative subdirectory inside the bound folder.")
+    max_depth: int = Field(default=3, ge=1, le=6)
+
+
+class SearchMaterialsDraft(ToolInput):
+    query: str = Field(min_length=1, max_length=200, description="Case-insensitive keyword, symbol, or phrase to search in bound local code, docs, and PDFs.")
+    source_id: str | None = Field(default=None, description="Optional bound material source ID.")
+    subpath: str = Field(default="", description="Optional relative file or subdirectory to narrow search.")
+
+
+class ReadMaterialDraft(ToolInput):
+    path: str = Field(min_length=1, description="Relative path inside a bound material folder.")
+    source_id: str | None = Field(default=None, description="Optional bound material source ID.")
+    start: int = Field(default=1, ge=1, description="1-based start line (for text/code) or start page (for PDF).")
+    end: int | None = Field(default=None, ge=1, description="Optional 1-based end line (for text/code) or end page (for PDF).")
+
+
 TOOL_MODELS = {
     "propose_ingest": ProposalDraft,
     "propose_expand": ProposalDraft,
@@ -161,13 +180,17 @@ TOOL_MODELS = {
     "ask_question": QuestionDraft,
     "present_quiz": InlineQuizDraft,
     "create_closure_quiz": ClosureQuizDraft,
+    "list_materials": ListMaterialsDraft,
+    "search_materials": SearchMaterialsDraft,
+    "read_material": ReadMaterialDraft,
 }
 
 
+MATERIAL_TOOLS = frozenset({"list_materials", "search_materials", "read_material"})
 CLOSURE_QUIZ_TOOLS = frozenset({"read_graph", "read_topic", "create_closure_quiz"})
 
 
-def tool_specs(only: frozenset[str] | None = None) -> list[dict[str, Any]]:
+def tool_specs(only: frozenset[str] | None = None, *, include_materials: bool = False) -> list[dict[str, Any]]:
     """Clew tools as Responses API function tools."""
     descriptions = {
         "propose_ingest": "Submit graph operations that preserve the supplied source material. Clew validates and presents them for user review; this does not apply changes. Omitted descriptive metadata is preserved on existing topics. Read the current graph version first.",
@@ -176,13 +199,20 @@ def tool_specs(only: frozenset[str] | None = None) -> list[dict[str, Any]]:
         "ask_question": "Show a focused question, optionally with choices and free-text replies. Ends this reply; the learner's answer arrives from Clew in a new turn.",
         "present_quiz": "Show one multiple-choice learning checkpoint with exactly four distinct choices. Ends this reply; Clew sends the server-graded answer in a new turn. Does not award topic completion.",
         "create_closure_quiz": "Register a complete closure quiz for a topic. Supply the requested number of questions with four distinct choices each. Clew checks prerequisites and grades the learner's answers itself.",
+        "list_materials": "List files inside the graph's bound read-only local material folders (code repos, Markdown/TXT docs, PDFs).",
+        "search_materials": "Search for a keyword, symbol, or phrase across the graph's bound local code, docs, and PDFs.",
+        "read_material": "Read a line range from a bound code/text file or a page range from a bound PDF file.",
     }
+    allowed = set(only) if only is not None else (set(TOOL_MODELS) - MATERIAL_TOOLS) | {"read_graph", "read_topic"}
+    if include_materials:
+        allowed |= MATERIAL_TOOLS
     functions = [
         {"type": "function", "name": name, "description": descriptions[name], "parameters": model.model_json_schema(), "strict": False}
         for name, model in TOOL_MODELS.items()
+        if name in allowed
     ]
-    functions.extend([
-        {"type": "function", "name": "read_graph", "description": "Read the current graph, its version, topics, edges, zones and progress. Call again after a conflict; do not guess ids or graph revisions.", "parameters": {"type": "object", "properties": {}, "additionalProperties": False}, "strict": False},
-        {"type": "function", "name": "read_topic", "description": "Read the full content, resources, artifacts and prerequisites of a topic in this conversation's graph.", "parameters": {"type": "object", "properties": {"topic_id": {"type": "string"}}, "required": ["topic_id"], "additionalProperties": False}, "strict": False},
-    ])
-    return [tool for tool in functions if only is None or tool["name"] in only]
+    if "read_graph" in allowed:
+        functions.append({"type": "function", "name": "read_graph", "description": "Read the current graph, its version, topics, edges, zones and progress. Call again after a conflict; do not guess ids or graph revisions.", "parameters": {"type": "object", "properties": {}, "additionalProperties": False}, "strict": False})
+    if "read_topic" in allowed:
+        functions.append({"type": "function", "name": "read_topic", "description": "Read the full content, resources, artifacts and prerequisites of a topic in this conversation's graph.", "parameters": {"type": "object", "properties": {"topic_id": {"type": "string"}}, "required": ["topic_id"], "additionalProperties": False}, "strict": False})
+    return functions

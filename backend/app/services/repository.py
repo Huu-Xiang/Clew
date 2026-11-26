@@ -11,7 +11,7 @@ import re
 import uuid
 
 from app.models.api import GraphExportPackage, ObsidianExportOptions, ObsidianGraphExportPackage
-from app.models.domain import Artifact, ChatMessage, CreateGraphRequest, Edge, GraphChatThread, GraphProposal, GraphSummary, PatchOperation, QuizAttempt, ResourceLink, TopicQuizSession, SnapshotRecord, StudyGraph, Topic, UpdateWorkspaceConfigRequest, WorkspaceDocument, WorkspaceEnvelope, Zone
+from app.models.domain import Artifact, ChatMessage, CreateGraphRequest, Edge, GraphChatThread, GraphProposal, GraphSummary, MaterialSource, PatchOperation, QuizAttempt, ResourceLink, TopicKeyFile, TopicQuizSession, SnapshotRecord, StudyGraph, Topic, UpdateWorkspaceConfigRequest, WorkspaceDocument, WorkspaceEnvelope, Zone
 from app.services.obsidian_export import build_obsidian_export_package
 from app.services.repository_config import apply_workspace_config_update
 from app.services.proposal_validator import prerequisites_are_acyclic
@@ -869,6 +869,93 @@ class GraphRepository:
                 workspace,
                 source="topic.artifact",
                 reason=f"append artifact to {topic.title}",
+                parent_snapshot_id=current.snapshot.id,
+            )
+        return self.snapshot(snapshot_id)
+
+    def add_material_source(self, graph_id: str, source: MaterialSource) -> WorkspaceEnvelope:
+        current = self.current()
+        workspace = WorkspaceDocument.model_validate(deepcopy(current.workspace.model_dump()))
+        graph = next((item for item in workspace.graphs if item.graph_id == graph_id), None)
+        if graph is None:
+            raise ValueError(f"graph {graph_id} not found")
+        if any(existing.path == source.path for existing in graph.material_sources):
+            raise ValueError("This folder is already bound to the graph.")
+        graph.material_sources = [*graph.material_sources, source]
+        with self._connect() as conn:
+            snapshot_id = self._insert_snapshot(
+                conn,
+                workspace,
+                source="graph.material",
+                reason=f"bind material folder {source.label}",
+                parent_snapshot_id=current.snapshot.id,
+            )
+        return self.snapshot(snapshot_id)
+
+    def remove_material_source(self, graph_id: str, source_id: str) -> WorkspaceEnvelope:
+        current = self.current()
+        workspace = WorkspaceDocument.model_validate(deepcopy(current.workspace.model_dump()))
+        graph = next((item for item in workspace.graphs if item.graph_id == graph_id), None)
+        if graph is None:
+            raise ValueError(f"graph {graph_id} not found")
+        removed = next((item for item in graph.material_sources if item.id == source_id), None)
+        if removed is None:
+            raise ValueError(f"material source {source_id} not found")
+        graph.material_sources = [item for item in graph.material_sources if item.id != source_id]
+        for topic in graph.topics:
+            topic.key_files = [item for item in topic.key_files if item.source_id != source_id]
+        with self._connect() as conn:
+            snapshot_id = self._insert_snapshot(
+                conn,
+                workspace,
+                source="graph.material",
+                reason=f"unbind material folder {removed.label}",
+                parent_snapshot_id=current.snapshot.id,
+            )
+        return self.snapshot(snapshot_id)
+
+    def add_topic_key_file(self, graph_id: str, topic_id: str, key_file: TopicKeyFile) -> WorkspaceEnvelope:
+        current = self.current()
+        workspace = WorkspaceDocument.model_validate(deepcopy(current.workspace.model_dump()))
+        graph = next((item for item in workspace.graphs if item.graph_id == graph_id), None)
+        if graph is None:
+            raise ValueError(f"graph {graph_id} not found")
+        if not any(item.id == key_file.source_id for item in graph.material_sources):
+            raise ValueError(f"material source {key_file.source_id} not found")
+        topic = next((item for item in graph.topics if item.id == topic_id), None)
+        if topic is None:
+            raise ValueError(f"topic {topic_id} not found")
+        if any(existing.source_id == key_file.source_id and existing.path == key_file.path for existing in topic.key_files):
+            raise ValueError("This key file is already pinned to the topic.")
+        topic.key_files = [*topic.key_files, key_file]
+        with self._connect() as conn:
+            snapshot_id = self._insert_snapshot(
+                conn,
+                workspace,
+                source="topic.key_file",
+                reason=f"pin key file to {topic.title}",
+                parent_snapshot_id=current.snapshot.id,
+            )
+        return self.snapshot(snapshot_id)
+
+    def remove_topic_key_file(self, graph_id: str, topic_id: str, key_file_id: str) -> WorkspaceEnvelope:
+        current = self.current()
+        workspace = WorkspaceDocument.model_validate(deepcopy(current.workspace.model_dump()))
+        graph = next((item for item in workspace.graphs if item.graph_id == graph_id), None)
+        if graph is None:
+            raise ValueError(f"graph {graph_id} not found")
+        topic = next((item for item in graph.topics if item.id == topic_id), None)
+        if topic is None:
+            raise ValueError(f"topic {topic_id} not found")
+        if not any(item.id == key_file_id for item in topic.key_files):
+            raise ValueError(f"key file {key_file_id} not found")
+        topic.key_files = [item for item in topic.key_files if item.id != key_file_id]
+        with self._connect() as conn:
+            snapshot_id = self._insert_snapshot(
+                conn,
+                workspace,
+                source="topic.key_file",
+                reason=f"unpin key file from {topic.title}",
                 parent_snapshot_id=current.snapshot.id,
             )
         return self.snapshot(snapshot_id)

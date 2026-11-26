@@ -1157,6 +1157,62 @@ export default function WorkspaceApp({ chatgpt, ...preference }: { chatgpt: Chat
     await loadSnapshots();
   }
 
+  async function addMaterialSource(path: string, label?: string): Promise<void> {
+    if (!activeGraph) return;
+    const response = await apiFetch(`${API_BASE}/api/v1/workspace/graphs/${activeGraph.graph_id}/materials`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ path: path.trim(), ...(label ? { label: label.trim() } : {}) }),
+    });
+    if (!response.ok) {
+      throw new Error(await readErrorMessage(response, copy.sessions.materialsAddFailed));
+    }
+    const payload = (await response.json()) as WorkspaceEnvelope;
+    setData(payload);
+    await loadSnapshots();
+  }
+
+  async function removeMaterialSource(sourceId: string): Promise<void> {
+    if (!activeGraph) return;
+    const response = await apiFetch(`${API_BASE}/api/v1/workspace/graphs/${activeGraph.graph_id}/materials/${encodeURIComponent(sourceId)}`, {
+      method: "DELETE",
+    });
+    if (!response.ok) {
+      throw new Error(await readErrorMessage(response, copy.sessions.materialsRemoveFailed));
+    }
+    const payload = (await response.json()) as WorkspaceEnvelope;
+    setData(payload);
+    await loadSnapshots();
+  }
+
+  async function addTopicKeyFile(topicId: string, sourceId: string, path: string, note = ""): Promise<void> {
+    if (!activeGraph) return;
+    const response = await apiFetch(`${API_BASE}/api/v1/workspace/graphs/${activeGraph.graph_id}/topics/${topicId}/key-files`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ source_id: sourceId, path: path.trim(), note: note.trim() }),
+    });
+    if (!response.ok) {
+      throw new Error(await readErrorMessage(response, copy.sessions.keyFilesAddFailed));
+    }
+    const payload = (await response.json()) as WorkspaceEnvelope;
+    setData(payload);
+    await loadSnapshots();
+  }
+
+  async function removeTopicKeyFile(topicId: string, keyFileId: string): Promise<void> {
+    if (!activeGraph) return;
+    const response = await apiFetch(`${API_BASE}/api/v1/workspace/graphs/${activeGraph.graph_id}/topics/${topicId}/key-files/${encodeURIComponent(keyFileId)}`, {
+      method: "DELETE",
+    });
+    if (!response.ok) {
+      throw new Error(await readErrorMessage(response, copy.sessions.keyFilesRemoveFailed));
+    }
+    const payload = (await response.json()) as WorkspaceEnvelope;
+    setData(payload);
+    await loadSnapshots();
+  }
+
   async function submitQuiz(): Promise<void> {
     if (!quizSession) return;
     const requestId = ++quizRequestRef.current;
@@ -1451,6 +1507,8 @@ export default function WorkspaceApp({ chatgpt, ...preference }: { chatgpt: Chat
           startQuiz,
           markTopicFinished,
           distillAfterQuiz,
+          addTopicKeyFile,
+          removeTopicKeyFile,
         }}
         assistant={{
           agentControls: {
@@ -1514,6 +1572,8 @@ export default function WorkspaceApp({ chatgpt, ...preference }: { chatgpt: Chat
         chatgpt={chatgpt}
         {...preference}
         activeGraph={activeGraph}
+        addMaterialSource={addMaterialSource}
+        removeMaterialSource={removeMaterialSource}
         loadSnapshots={loadSnapshots}
         historyLoading={historyLoading}
         historyError={historyError}

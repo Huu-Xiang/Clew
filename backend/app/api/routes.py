@@ -4,6 +4,7 @@ from hashlib import sha1
 from typing import TYPE_CHECKING
 
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.api.deps import (
     ensure_debug_logs_enabled,
@@ -25,7 +26,8 @@ from app.api.route_helpers import (
 from app.core.config import Settings, get_settings
 from app.core.locale import AppLocale
 from app.models.api import GraphExportRequest, GraphImportRequest, GraphLayoutPositionRequest, RenameGraphRequest, TopicArtifactInput, TopicResourceInput, UpdateGraphLayoutRequest
-from app.models.domain import Artifact, CreateGraphRequest, GraphProposalEnvelope, QuizStartRequest, QuizStartResponse, QuizSubmitRequest, QuizSubmitResponse, ResourceLink, UpdateWorkspaceConfigRequest
+from app.models.domain import Artifact, CreateGraphRequest, GraphProposalEnvelope, MaterialSource, QuizStartRequest, QuizStartResponse, QuizSubmitRequest, QuizSubmitResponse, ResourceLink, TopicKeyFile, UpdateWorkspaceConfigRequest
+from app.services.material_service import MaterialError, MaterialService
 from app.services.debug_log_service import DebugClientLogRequest, get_debug_log_service
 from app.services.proposal_normalizer import ProposalNormalizer
 from app.services.repository import GraphRepository, ProposalConflictError
@@ -215,6 +217,112 @@ def append_topic_artifact(
     )
     try:
         workspace = repository.append_topic_artifact(graph_id, topic_id, artifact)
+    except ValueError as exc:
+        message = str(exc)
+        status_code = 404 if "not found" in message else 400
+        raise HTTPException(status_code=status_code, detail=message) from exc
+    return _workspace_config_payload(workspace, settings)
+
+
+class MaterialSourceInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    path: str = Field(min_length=1, max_length=2000)
+    label: str | None = Field(default=None, max_length=120)
+
+
+class TopicKeyFileInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    source_id: str = Field(min_length=1, max_length=120)
+    path: str = Field(min_length=1, max_length=1000)
+    note: str = Field(default="", max_length=500)
+
+
+@router.post("/api/v1/workspace/graphs/{graph_id}/materials")
+def add_graph_material_source(
+    graph_id: str,
+    body: MaterialSourceInput,
+    repository: GraphRepository = Depends(get_repository),
+    settings: Settings = Depends(get_settings),
+) -> dict:
+    service = MaterialService()
+    try:
+        resolved = service.validate_folder_path(body.path)
+    except MaterialError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    label = (body.label or "").strip() or resolved.name or str(resolved)
+    source = MaterialSource(
+        id=f"mat-{sha1(str(resolved).encode('utf-8')).hexdigest()[:12]}",
+        label=label,
+        path=str(resolved),
+    )
+    try:
+        workspace = repository.add_material_source(graph_id, source)
+    except ValueError as exc:
+        message = str(exc)
+        status_code = 404 if "not found" in message else 400
+        raise HTTPException(status_code=status_code, detail=message) from exc
+    return _workspace_config_payload(workspace, settings)
+
+
+@router.delete("/api/v1/workspace/graphs/{graph_id}/materials/{source_id}")
+def delete_graph_material_source(
+    graph_id: str,
+    source_id: str,
+    repository: GraphRepository = Depends(get_repository),
+    settings: Settings = Depends(get_settings),
+) -> dict:
+    try:
+        workspace = repository.remove_material_source(graph_id, source_id)
+    except ValueError as exc:
+        message = str(exc)
+        status_code = 404 if "not found" in message else 400
+        raise HTTPException(status_code=status_code, detail=message) from exc
+    return _workspace_config_payload(workspace, settings)
+
+
+@router.post("/api/v1/workspace/graphs/{graph_id}/topics/{topic_id}/key-files")
+def add_topic_key_file(
+    graph_id: str,
+    topic_id: str,
+    body: TopicKeyFileInput,
+    repository: GraphRepository = Depends(get_repository),
+    settings: Settings = Depends(get_settings),
+) -> dict:
+    try:
+        graph = repository.graph(graph_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=f"graph {graph_id} not found") from exc
+    cleaned_path = body.path.strip().lstrip("/")
+    try:
+        # Verify the file exists and stays confined inside the bound source folder.
+        MaterialService().read_slice(graph, source_id=body.source_id, path=cleaned_path, start=1, end=1)
+    except MaterialError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    key_file = TopicKeyFile(
+        id=f"kf-{sha1(f'{body.source_id}:{cleaned_path}'.encode('utf-8')).hexdigest()[:12]}",
+        source_id=body.source_id,
+        path=cleaned_path,
+        note=body.note.strip(),
+    )
+    try:
+        workspace = repository.add_topic_key_file(graph_id, topic_id, key_file)
+    except ValueError as exc:
+        message = str(exc)
+        status_code = 404 if "not found" in message else 400
+        raise HTTPException(status_code=status_code, detail=message) from exc
+    return _workspace_config_payload(workspace, settings)
+
+
+@router.delete("/api/v1/workspace/graphs/{graph_id}/topics/{topic_id}/key-files/{key_file_id}")
+def delete_topic_key_file(
+    graph_id: str,
+    topic_id: str,
+    key_file_id: str,
+    repository: GraphRepository = Depends(get_repository),
+    settings: Settings = Depends(get_settings),
+) -> dict:
+    try:
+        workspace = repository.remove_topic_key_file(graph_id, topic_id, key_file_id)
     except ValueError as exc:
         message = str(exc)
         status_code = 404 if "not found" in message else 400

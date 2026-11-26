@@ -25,6 +25,7 @@ import { useModalAccessibility } from "../lib/useModalAccessibility";
 import { GraphCanvas } from "./GraphCanvas";
 import type { TopicAnchorPoint } from "./GraphCanvas";
 import { AssistantModelMenuTrigger, LightChatWindow, LightWorkspaceWindow, TopicAssetModal } from "./WorkspaceShellAuxWindows";
+import { TopicKeyFilesSection } from "./TopicKeyFilesSection";
 import { AssistantComposer } from "./assistant/AssistantComposer";
 import { AssistantSessionList } from "./assistant/AssistantSessionList";
 import { AssistantThread } from "./assistant/AssistantThread";
@@ -198,6 +199,8 @@ type TopicDetailsProps = {
   startQuiz: () => Promise<void>;
   markTopicFinished: () => Promise<void>;
   distillAfterQuiz?: () => Promise<void>;
+  addTopicKeyFile?: (topicId: string, sourceId: string, path: string, note?: string) => Promise<void>;
+  removeTopicKeyFile?: (topicId: string, keyFileId: string) => Promise<void>;
 };
 
 type AssistantWorkspaceProps = {
@@ -1392,6 +1395,15 @@ export function WorkspaceShell(props: WorkspaceShellProps): React.JSX.Element {
                         <div className="topicPopoverEmpty">{copy.topic.noResources}</div>
                       )}
                     </div>
+                    {(activeGraph?.material_sources?.length ?? 0) > 0 && topicDetails.addTopicKeyFile && topicDetails.removeTopicKeyFile ? (
+                      <TopicKeyFilesSection
+                        copy={copy}
+                        topic={selectedTopic}
+                        materialSources={activeGraph?.material_sources ?? []}
+                        addTopicKeyFile={topicDetails.addTopicKeyFile}
+                        removeTopicKeyFile={topicDetails.removeTopicKeyFile}
+                      />
+                    ) : null}
                     <div className="topicPopoverSection">
                       <div className="topicPopoverSectionHeader">
                         <div className="topicPopoverLabel">{copy.topic.artifacts}</div>

@@ -181,6 +181,19 @@ class QuizSubmitResponse(BaseModel):
     workspace: "WorkspaceEnvelope"
 
 
+class MaterialSource(BaseModel):
+    id: str
+    label: str
+    path: str
+
+
+class TopicKeyFile(BaseModel):
+    id: str
+    source_id: str
+    path: str
+    note: str = ""
+
+
 class Topic(BaseModel):
     id: str
     title: str
@@ -193,6 +206,7 @@ class Topic(BaseModel):
     zones: list[str] = Field(default_factory=list)
     resources: list[ResourceLink] = Field(default_factory=list)
     artifacts: list[Artifact] = Field(default_factory=list)
+    key_files: list[TopicKeyFile] = Field(default_factory=list)
     quiz_policy: QuizPolicy = Field(default_factory=QuizPolicy)
     metadata: dict[str, Any] = Field(default_factory=dict)
 
@@ -225,6 +239,7 @@ class StudyGraph(BaseModel):
     topics: list[Topic] = Field(default_factory=list)
     edges: list[Edge] = Field(default_factory=list)
     zones: list[Zone] = Field(default_factory=list)
+    material_sources: list[MaterialSource] = Field(default_factory=list)
     quiz_attempts: list[QuizAttempt] = Field(default_factory=list)
     metadata: dict[str, Any] = Field(default_factory=dict)
 

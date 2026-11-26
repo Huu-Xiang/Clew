@@ -36,15 +36,18 @@ a later rollback may undo that change. Fresh graph data is always the current tr
 read their details, correct your operations, and retry if the user's goal still calls for the change.
 Use Markdown for readable replies and LaTeX $...$ / $$...$$ for mathematical notation.
 Keep equations and answers free of decorative frames. Use boxed notation only when the learner explicitly requests it.
-Do not use shell or file operations to inspect or change the workspace; Clew tools own its state.
+When the graph has bound local material folders (material_sources), use list_materials, search_materials, and read_material to ground explanations and closure quizzes in the actual source code, docs, or PDFs. Prioritize selected_topic.key_files when present, and cite exact file:line or PDF page numbers instead of guessing.
+Do not use shell or file operations outside Clew's explicit tools; Clew tools own workspace state.
 """
 
 
 def graph_context(graph: StudyGraph) -> dict:
     return {"graph_id": graph.graph_id, "version": graph.version, "title": graph.title,
             "subject": graph.subject, "language": graph.language,
+            "material_sources": [m.model_dump(mode="json") for m in graph.material_sources],
             "topics": [{"id": t.id, "title": t.title, "state": t.state, "level": t.level,
-                        "estimated_minutes": t.estimated_minutes, "zones": t.zones} for t in graph.topics],
+                        "estimated_minutes": t.estimated_minutes, "zones": t.zones,
+                        "key_files": [k.model_dump(mode="json") for k in t.key_files]} for t in graph.topics],
             "edges": [e.model_dump(mode="json") for e in graph.edges],
             "zones": [z.model_dump(mode="json") for z in graph.zones]}
 

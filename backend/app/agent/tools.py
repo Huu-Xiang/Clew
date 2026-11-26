@@ -4,8 +4,21 @@ import json
 from typing import TYPE_CHECKING
 
 from app.agent.context import graph_context
-from app.agent.contracts import CLOSURE_QUIZ_TOOLS, TOOL_MODELS, ClosureQuizDraft, DistillationDraft, InlineQuizDraft, ProposalDraft, QuestionDraft
+from app.agent.contracts import (
+    CLOSURE_QUIZ_TOOLS,
+    MATERIAL_TOOLS,
+    TOOL_MODELS,
+    ClosureQuizDraft,
+    DistillationDraft,
+    InlineQuizDraft,
+    ListMaterialsDraft,
+    ProposalDraft,
+    QuestionDraft,
+    ReadMaterialDraft,
+    SearchMaterialsDraft,
+)
 from app.models.domain import AgentActivity, AgentQuestion, ChatMessage, DistillationCard, DistillationSummary, InlineChatQuiz, QuizQuestion, TopicQuizSessionPublic
+from app.services.material_service import MaterialService
 from app.services.proposal_service import ProposalService
 from app.services.quiz_service import QuizService
 
@@ -16,6 +29,9 @@ if TYPE_CHECKING:
 LABELS = {
     "read_graph": "Reading your graph",
     "read_topic": "Reading the topic",
+    "list_materials": "Listing local materials",
+    "search_materials": "Searching local materials",
+    "read_material": "Reading local material",
     "propose_ingest": "Preparing a graph proposal",
     "propose_expand": "Preparing a graph proposal",
     "propose_distillation": "Distilling this conversation",
@@ -41,7 +57,7 @@ async def execute_tool(runtime: AgentRuntime, run: AgentRun, tool: str, call_id:
     try:
         if tool not in LABELS:
             raise ValueError("Unknown Clew tool.")
-        if run.quiz_topic_id and tool not in CLOSURE_QUIZ_TOOLS:
+        if run.quiz_topic_id and tool not in (CLOSURE_QUIZ_TOOLS | MATERIAL_TOOLS):
             raise ValueError("This turn can only prepare the requested completion test.")
         try:
             arguments = json.loads(raw_arguments or "{}")
@@ -64,6 +80,15 @@ async def execute_tool(runtime: AgentRuntime, run: AgentRun, tool: str, call_id:
                 raise ValueError("Topic not found in this conversation's graph.")
             result = {"graph_version": graph.version, "topic": topic.model_dump(mode="json"),
                       "closure": QuizService(runtime.settings).build_closure_status(graph, topic.id).model_dump(mode="json")}
+        elif tool == "list_materials":
+            assert isinstance(parsed, ListMaterialsDraft)
+            result = MaterialService().list_files(graph, source_id=parsed.source_id, subpath=parsed.subpath, max_depth=parsed.max_depth)
+        elif tool == "search_materials":
+            assert isinstance(parsed, SearchMaterialsDraft)
+            result = MaterialService().search_text(graph, parsed.query, source_id=parsed.source_id, subpath=parsed.subpath)
+        elif tool == "read_material":
+            assert isinstance(parsed, ReadMaterialDraft)
+            result = MaterialService().read_slice(graph, source_id=parsed.source_id, path=parsed.path, start=parsed.start, end=parsed.end)
         elif tool in {"propose_ingest", "propose_expand"}:
             assert isinstance(parsed, ProposalDraft)
             proposal = ProposalService().prepare(graph, parsed, tool=tool, proposal_id=f"prop-{call_id}",
