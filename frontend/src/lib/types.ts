@@ -142,6 +142,21 @@ export type InlineChatQuiz = {
   status?: "pending" | "answered" | "interrupted";
 };
 
+export type DistillationSummary = {
+  topic_id: string;
+  title: string;
+  body: string;
+  applied?: boolean;
+  artifact_id?: string | null;
+};
+
+export type DistillationCard = {
+  distillation_id: string;
+  summary?: DistillationSummary | null;
+  proposal?: ProposalGenerateResponse | null;
+  proposal_applied?: boolean;
+};
+
 export type ChatMessage = {
   id: string;
   role: "user" | "assistant";
@@ -152,11 +167,12 @@ export type ChatMessage = {
   created_at: string;
   model?: string | null;
   fallback_used?: boolean;
-  action?: "answer" | "propose_ingest" | "propose_expand" | null;
+  action?: "answer" | "propose_ingest" | "propose_expand" | "propose_distillation" | null;
   planning_status?: string | null;
   planning_error?: string | null;
   proposal_applied?: boolean;
   proposal?: ProposalGenerateResponse | null;
+  distillation?: DistillationCard | null;
   inline_quiz?: InlineChatQuiz | null;
   question?: AgentQuestion | null;
   closure_quiz?: TopicQuizSession | null;

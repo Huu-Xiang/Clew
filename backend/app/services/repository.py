@@ -423,10 +423,104 @@ class GraphRepository:
             rows = conn.execute("SELECT message_id, payload_json FROM chat_messages WHERE graph_id = ?", (graph.graph_id,)).fetchall()
             for row in rows:
                 message = json.loads(row["payload_json"])
+                changed = False
                 if ((message.get("proposal") or {}).get("proposal_envelope") or {}).get("proposal_id") == proposal.proposal_id:
                     message["proposal_applied"] = True
+                    changed = True
+                distillation = message.get("distillation")
+                if isinstance(distillation, dict) and ((distillation.get("proposal") or {}).get("proposal_envelope") or {}).get("proposal_id") == proposal.proposal_id:
+                    distillation["proposal_applied"] = True
+                    changed = True
+                if changed:
                     conn.execute("UPDATE chat_messages SET payload_json = ? WHERE message_id = ?", (json.dumps(message), row["message_id"]))
             return load_workspace_snapshot(conn, snapshot_id)
+
+    def apply_distillation_summary(self, graph_id: str, session_id: str, message_id: str) -> tuple[WorkspaceEnvelope, ChatMessage]:
+        with self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            session_row = self._resolve_session(conn, graph_id, session_id)
+            sid = str(session_row["session_id"])
+            row = conn.execute(
+                "SELECT payload_json FROM chat_messages WHERE session_id = ? AND message_id = ?",
+                (sid, message_id),
+            ).fetchone()
+            if row is None:
+                raise KeyError(message_id)
+            message = ChatMessage.model_validate_json(row["payload_json"])
+            if message.distillation is None or message.distillation.summary is None:
+                raise ValueError("This message does not contain a distillation summary.")
+            summary = message.distillation.summary
+            if summary.applied:
+                return load_current_workspace(conn), message
+            current = load_current_workspace(conn)
+            workspace = WorkspaceDocument.model_validate(deepcopy(current.workspace.model_dump()))
+            graph = next((item for item in workspace.graphs if item.graph_id == graph_id), None)
+            if graph is None:
+                raise ValueError(f"graph {graph_id} not found")
+            topic = next((item for item in graph.topics if item.id == summary.topic_id), None)
+            if topic is None:
+                raise ValueError(f"topic {summary.topic_id} not found")
+            old_graph_version = graph.version
+            artifact = Artifact(
+                id=f"artifact-{uuid.uuid4().hex[:12]}",
+                title=summary.title.strip(),
+                kind="note",
+                body=summary.body.strip(),
+            )
+            topic.artifacts = [*topic.artifacts, artifact]
+            snapshot_id = self._insert_snapshot(
+                conn,
+                workspace,
+                source="topic.artifact",
+                reason=f"save distilled summary to {topic.title}",
+                parent_snapshot_id=current.snapshot.id,
+            )
+            summary.applied = True
+            summary.artifact_id = artifact.id
+            if (
+                message.distillation.proposal is not None
+                and not message.distillation.proposal_applied
+                and message.distillation.proposal.proposal_envelope.base_graph_version == old_graph_version
+            ):
+                message.distillation.proposal.proposal_envelope.base_graph_version = graph.version
+            conn.execute(
+                "UPDATE chat_messages SET payload_json = ? WHERE session_id = ? AND message_id = ?",
+                (message.model_dump_json(), sid, message_id),
+            )
+            conn.execute(
+                "UPDATE chat_sessions SET updated_at = ? WHERE session_id = ?",
+                (datetime.now(timezone.utc).isoformat(), sid),
+            )
+            return load_workspace_snapshot(conn, snapshot_id), message
+
+    def revert_chat_from_message(self, graph_id: str, session_id: str, message_id: str) -> tuple[list[str], ChatMessage]:
+        with self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            session_row = self._resolve_session(conn, graph_id, session_id)
+            sid = str(session_row["session_id"])
+            target = conn.execute(
+                "SELECT ordinal, role, payload_json FROM chat_messages WHERE session_id = ? AND message_id = ?",
+                (sid, message_id),
+            ).fetchone()
+            if target is None:
+                raise KeyError(message_id)
+            reverted_message = ChatMessage.model_validate_json(target["payload_json"])
+            if reverted_message.role != "user":
+                raise ValueError("Only user messages can be reverted.")
+            to_delete = conn.execute(
+                "SELECT message_id FROM chat_messages WHERE session_id = ? AND ordinal >= ? ORDER BY ordinal ASC",
+                (sid, int(target["ordinal"])),
+            ).fetchall()
+            removed_ids = [str(item["message_id"]) for item in to_delete]
+            conn.execute(
+                "DELETE FROM chat_messages WHERE session_id = ? AND ordinal >= ?",
+                (sid, int(target["ordinal"])),
+            )
+            conn.execute(
+                "UPDATE chat_sessions SET updated_at = ? WHERE session_id = ?",
+                (datetime.now(timezone.utc).isoformat(), sid),
+            )
+            return removed_ids, reverted_message
 
     def snapshot(self, snapshot_id: int) -> WorkspaceEnvelope:
         with self._connect() as conn:

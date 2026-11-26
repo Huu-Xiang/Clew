@@ -4,8 +4,8 @@ import json
 from typing import TYPE_CHECKING
 
 from app.agent.context import graph_context
-from app.agent.contracts import CLOSURE_QUIZ_TOOLS, TOOL_MODELS, ClosureQuizDraft, InlineQuizDraft, ProposalDraft, QuestionDraft
-from app.models.domain import AgentActivity, AgentQuestion, ChatMessage, InlineChatQuiz, QuizQuestion, TopicQuizSessionPublic
+from app.agent.contracts import CLOSURE_QUIZ_TOOLS, TOOL_MODELS, ClosureQuizDraft, DistillationDraft, InlineQuizDraft, ProposalDraft, QuestionDraft
+from app.models.domain import AgentActivity, AgentQuestion, ChatMessage, DistillationCard, DistillationSummary, InlineChatQuiz, QuizQuestion, TopicQuizSessionPublic
 from app.services.proposal_service import ProposalService
 from app.services.quiz_service import QuizService
 
@@ -18,6 +18,7 @@ LABELS = {
     "read_topic": "Reading the topic",
     "propose_ingest": "Preparing a graph proposal",
     "propose_expand": "Preparing a graph proposal",
+    "propose_distillation": "Distilling this conversation",
     "ask_question": "Waiting for your answer",
     "present_quiz": "Waiting for your answer",
     "create_closure_quiz": "Preparing your test",
@@ -72,6 +73,39 @@ async def execute_tool(runtime: AgentRuntime, run: AgentRun, tool: str, call_id:
             result = {"status": "awaiting_review", "proposal_id": proposal.proposal_envelope.proposal_id,
                       "base_graph_version": graph.version, "preview": proposal.apply_plan.preview.model_dump(),
                       "message": "The proposal is ready in Clew. The user must accept it before the graph changes."}
+        elif tool == "propose_distillation":
+            assert isinstance(parsed, DistillationDraft)
+            summary_card = None
+            if parsed.summary is not None:
+                target_topic_id = parsed.summary.topic_id or run.request.selected_topic_id
+                if not target_topic_id or not any(t.id == target_topic_id for t in graph.topics):
+                    raise ValueError("Distillation summary requires a valid topic_id in this graph.")
+                summary_card = DistillationSummary(
+                    topic_id=target_topic_id,
+                    title=parsed.summary.title,
+                    body=parsed.summary.body,
+                )
+            proposal = None
+            if parsed.proposal is not None:
+                proposal = ProposalService().prepare(
+                    graph, parsed.proposal, tool="propose_expand", proposal_id=f"prop-{call_id}",
+                    prompt=run.request.prompt, model=run.model, use_grounding=run.web_searched,
+                )
+            message.distillation = DistillationCard(
+                distillation_id=f"distill-{call_id}",
+                summary=summary_card,
+                proposal=proposal,
+            )
+            message.action = "propose_distillation"
+            result = {
+                "status": "awaiting_review",
+                "distillation_id": message.distillation.distillation_id,
+                "has_summary": summary_card is not None,
+                "has_proposal": proposal is not None,
+                "base_graph_version": graph.version,
+                "preview": proposal.apply_plan.preview.model_dump() if proposal else None,
+                "message": "The distillation card is ready in Clew. The user chooses whether to save the summary and/or apply the graph proposal.",
+            }
         elif tool in {"ask_question", "present_quiz"}:
             interaction_id = f"question-{call_id}"
             if isinstance(parsed, QuestionDraft):

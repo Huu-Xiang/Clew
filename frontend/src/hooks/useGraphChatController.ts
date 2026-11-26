@@ -208,6 +208,42 @@ export function useGraphChatController({ activeGraph, selectedTopicId, selectedC
         { ...current, error: cause instanceof Error ? cause.message : copyRef.current.sessions.stopFailed });
     }
   };
+  const revertMessage = async (messageId: string): Promise<string | null> => {
+    const sessionId = statesRef.current[key]?.sessionId ?? activeSessionId;
+    if (!graphId || !sessionId || !messageId) return null;
+    const generation = graphGenerations.current.get(graphId) ?? 0;
+    const currentOperation = () => mounted.current && generation === (graphGenerations.current.get(graphId) ?? 0);
+    streams.current.get(key)?.abort();
+    streams.current.delete(key);
+    busy.current.get(key)?.abort();
+    busy.current.delete(key);
+    try {
+      const response = await apiFetch(`${API_BASE}/api/v1/graphs/${graphId}/chat/revert`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ session_id: sessionId, message_id: messageId }),
+      });
+      if (!response.ok) throw new Error(await readErrorMessage(response, copyRef.current.sessions.revertFailed));
+      const payload = (await response.json()) as { thread: unknown; reverted_prompt?: string };
+      const thread = parseChatThread(payload.thread);
+      if (thread.graph_id !== graphId || thread.session_id !== sessionId) throw new Error("The revert response belongs to another conversation.");
+      const restoredPrompt = typeof payload.reverted_prompt === "string" ? payload.reverted_prompt : "";
+      if (currentOperation()) {
+        update(key, (current) => ({
+          ...stateFromThread(current, thread),
+          input: restoredPrompt || current.input,
+          error: null,
+        }));
+        void loadSessions();
+      }
+      return restoredPrompt;
+    } catch (cause) {
+      if (currentOperation()) {
+        update(key, (current) => ({ ...current, error: cause instanceof Error ? cause.message : copyRef.current.sessions.revertFailed }));
+      }
+      return null;
+    }
+  };
   const clearChatStateForGraph = (target: string | null | undefined) => {
     if (!target) return;
     graphGenerations.current.set(target, (graphGenerations.current.get(target) ?? 0) + 1);
@@ -233,6 +269,6 @@ export function useGraphChatController({ activeGraph, selectedTopicId, selectedC
   return { activeSessionId, setActiveSessionId, chatSessions: graphSessions, currentChatState,
     chatLoading: activeAgentStatus(currentChatState.status), chatThreadLoading: loadingKey === key,
     chatError: currentChatState.error ?? null, chatSessionsError: Object.prototype.hasOwnProperty.call(sessionErrors, graphId) ? sessionErrors[graphId] : null,
-    updateCurrentChatState, clearChatStateForGraph, loadSessions, sendChat, answerInteraction, stopChat,
+    updateCurrentChatState, clearChatStateForGraph, loadSessions, sendChat, answerInteraction, stopChat, revertMessage,
     reconnectChat: () => setRevision((current) => current + 1) };
 }

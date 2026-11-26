@@ -32,10 +32,10 @@ export function presentChatReply(reply: ChatReply, active: boolean, waiting: boo
   const progress = active && !waiting;
   const activeTool = reply.messages.filter((message) => message.activity?.status === "running").at(-1)?.activity;
   const tool = activeTool?.tool;
-  const progressLabel = tool === "propose_ingest" || tool === "propose_expand" || tool === "create_closure_quiz"
+  const progressLabel = tool === "propose_ingest" || tool === "propose_expand" || tool === "propose_distillation" || tool === "create_closure_quiz"
     ? copy.progress[tool] : copy.working;
   const cards = reply.messages.filter((message) =>
-    message.proposal || message.question || message.inline_quiz || message.closure_quiz
+    message.proposal || message.distillation || message.question || message.inline_quiz || message.closure_quiz
     || message.planning_status || message.planning_error || message.activity?.status === "failed",
   );
   return {

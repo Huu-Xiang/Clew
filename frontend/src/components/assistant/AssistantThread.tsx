@@ -1,5 +1,5 @@
 import React from "react";
-import { Check } from "@phosphor-icons/react";
+import { ArrowCounterClockwise, Check } from "@phosphor-icons/react";
 
 import type { GraphChatState } from "../../lib/appContracts";
 import type { AppCopy } from "../../lib/appCopy";
@@ -80,14 +80,149 @@ export function AssistantThread({
             {view.texts.map((message) => <div key={message.id} className="chatCopy">
               {message.role === "assistant" ? <AssistantMarkdown content={message.content} /> : renderDisplayText(message.content)}
             </div>)}
+            {reply.role === "user" && agentControls.revertMessage && reply.messages[0]?.id ? (
+              <div className="chatUserActions">
+                <button
+                  className="chatRevertButton"
+                  disabled={agentControls.revertLoadingMessageId === reply.messages[0].id}
+                  onClick={() => void agentControls.revertMessage?.(reply.messages[0].id)}
+                  title={copy.sessions.revertMessageTitle}
+                  type="button"
+                >
+                  <ArrowCounterClockwise size={12} weight="bold" aria-hidden="true" />
+                  <span>{copy.sessions.revertMessage}</span>
+                </button>
+              </div>
+            ) : null}
             {view.cards.map((message) => {
               const proposal = message.proposal;
               const proposalCounts = proposal ? summarizePreviewCounts(proposal, copy) : [];
               const proposalHighlights = proposal ? summarizeTopOperations(proposal, copy) : [];
+              const distillation = message.distillation;
+              const distillProposal = distillation?.proposal ?? null;
+              const distillCounts = distillProposal ? summarizePreviewCounts(distillProposal, copy) : [];
+              const distillHighlights = distillProposal ? summarizeTopOperations(distillProposal, copy) : [];
+              const distillSummaryApplied = Boolean(distillation?.summary?.applied);
+              const distillProposalApplied = Boolean(distillation?.proposal_applied);
+              const distillCanApplySummary = Boolean(distillation?.summary && !distillSummaryApplied);
+              const distillCanApplyProposal = Boolean(distillProposal && !distillProposalApplied && distillProposal.apply_plan.validation.ok);
               return <React.Fragment key={message.id}>
                 {message.activity?.status === "failed" && message.question?.status !== "interrupted" && message.inline_quiz?.status !== "interrupted"
                   ? <div className="inlineNotice inlineNoticeError">{copy.errors.request(copy.sessions.toolFailed, message.activity.detail)}</div> : null}
                 {message.question || message.inline_quiz ? <AgentInteraction question={message.question} quiz={message.inline_quiz} controls={agentControls} copy={copy} /> : null}
+                {distillation ? (
+                  <div className="proposalInlineCard distillationCard">
+                    <div className="proposalInlineHead">
+                      <div>
+                        <div className="proposalInlineTitle">{copy.sessions.distillationCardTitle}</div>
+                        {distillProposal?.display.summary ? (
+                          <div className="proposalInlineNote">{distillProposal.display.summary}</div>
+                        ) : null}
+                      </div>
+                      {distillCanApplySummary && distillCanApplyProposal && agentControls.applyDistillationAll ? (
+                        <button
+                          className="proposalOpenButton"
+                          disabled={agentControls.distillSummaryLoadingId === message.id || applyLoadingMessageId === message.id}
+                          onClick={() => void agentControls.applyDistillationAll?.(message.id, distillation)}
+                          type="button"
+                        >
+                          {copy.sessions.distillationApplyAll}
+                        </button>
+                      ) : null}
+                    </div>
+                    {distillation.summary ? (
+                      <div className="distillationSection">
+                        <div className="distillationSectionHead">
+                          <div className="distillationSectionMeta">
+                            <span className="distillationSectionLabel">{copy.sessions.distillationSummaryLabel}</span>
+                            <strong className="distillationSummaryTitle">{distillation.summary.title}</strong>
+                          </div>
+                          {agentControls.applyDistillationSummary ? (
+                            <button
+                              className={`distillationActionButton${distillSummaryApplied ? " distillationActionButtonDone" : ""}`}
+                              disabled={distillSummaryApplied || agentControls.distillSummaryLoadingId === message.id}
+                              onClick={() => void agentControls.applyDistillationSummary?.(message.id)}
+                              type="button"
+                            >
+                              {agentControls.distillSummaryLoadingId === message.id
+                                ? "…"
+                                : distillSummaryApplied
+                                  ? <><Check size={12} weight="bold" aria-hidden="true" /><span>{copy.sessions.distillationSummarySaved}</span></>
+                                  : copy.sessions.distillationSaveSummary}
+                            </button>
+                          ) : null}
+                        </div>
+                        <div className="distillationSummaryBody chatCopy">
+                          <AssistantMarkdown content={distillation.summary.body} />
+                        </div>
+                      </div>
+                    ) : null}
+                    {distillProposal ? (
+                      <div className="distillationSection">
+                        <div className="distillationSectionHead">
+                          <span className="distillationSectionLabel">{copy.sessions.distillationNodesLabel}</span>
+                          <button
+                            className={`distillationActionButton${distillProposalApplied ? " distillationActionButtonDone" : ""}`}
+                            disabled={applyLoadingMessageId === message.id || distillProposalApplied || !distillProposal.apply_plan.validation.ok}
+                            onClick={() => void (agentControls.applyDistillationProposal ?? applyProposalFromMessage)(message.id, distillProposal)}
+                            type="button"
+                          >
+                            {applyLoadingMessageId === message.id
+                              ? "…"
+                              : distillProposalApplied
+                                ? <><Check size={12} weight="bold" aria-hidden="true" /><span>{copy.sessions.applied}</span></>
+                                : copy.sessions.distillationApplyNodes}
+                          </button>
+                        </div>
+                        {distillCounts.length > 0 ? (
+                          <div className="proposalStats">
+                            {distillCounts.map((item) => (
+                              <div key={item.label} className="proposalStat">
+                                <strong>{item.value}</strong>
+                                <span>{item.label}</span>
+                              </div>
+                            ))}
+                          </div>
+                        ) : null}
+                        {distillHighlights.length > 0 ? (
+                          <div className="proposalMiniList">
+                            {distillHighlights.map((item, index) => (
+                              <div key={`${item.label}-${item.target}-${index}`} className="proposalMiniItem">
+                                <span>{item.target}</span>
+                                <span className="proposalMiniAction">{item.label}</span>
+                              </div>
+                            ))}
+                          </div>
+                        ) : null}
+                        <details className="proposalReviewDetails">
+                          <summary>{copy.sessions.reviewChanges}</summary>
+                          {distillProposal.proposal_envelope.operations.map((operation) => <div key={operation.op_id} className="proposalReviewItem">
+                            {operation.topic ? <><strong>{operation.topic.title}</strong><AssistantMarkdown content={operation.topic.description} />
+                              {operation.topic.estimated_minutes > 0 ? <div className="proposalReviewMeta">{copy.sessions.studyTime(operation.topic.estimated_minutes)}</div> : null}
+                            </> : operation.zone ? <strong>{operation.zone.title}</strong> : operation.edge ? <div>{operation.edge.source_topic_id} → {operation.edge.target_topic_id}</div> : null}
+                            {operation.rationale ? <div className="proposalReviewMeta">{operation.rationale}</div> : null}
+                          </div>)}
+                        </details>
+                        {distillProposal.apply_plan.validation.errors.length > 0 ? (
+                          <div className="proposalNotices">
+                            {distillProposal.apply_plan.validation.errors.map((entry) => (
+                              <div key={entry} className="proposalNotice proposalNoticeError">{entry}</div>
+                            ))}
+                          </div>
+                        ) : null}
+                        {distillProposal.apply_plan.validation.warnings.length > 0 ? (
+                          <div className="proposalNotices">
+                            {distillProposal.apply_plan.validation.warnings.map((entry) => (
+                              <div key={entry} className="proposalNotice proposalNoticeWarn">{entry}</div>
+                            ))}
+                          </div>
+                        ) : null}
+                      </div>
+                    ) : (
+                      <div className="distillationEmptyNodes">{copy.sessions.distillationNoNewNodes}</div>
+                    )}
+                  </div>
+                ) : null}
                 {message.closure_quiz ? <div className="proposalInlineCard">
                   <div className="proposalInlineHead">
                     <div>

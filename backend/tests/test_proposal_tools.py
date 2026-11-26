@@ -125,7 +125,7 @@ class ProposalToolTests(unittest.TestCase):
         self.assertEqual({tool["type"] for tool in specs}, {"function"})
         self.assertTrue(all("parameters" in tool for tool in specs))
         names = {tool["name"] for tool in specs}
-        self.assertEqual(names, {"read_graph", "read_topic", "propose_ingest", "propose_expand", "ask_question", "present_quiz", "create_closure_quiz"})
+        self.assertEqual(names, {"read_graph", "read_topic", "propose_ingest", "propose_expand", "propose_distillation", "ask_question", "present_quiz", "create_closure_quiz"})
         self.assertNotIn("answer", names)
 
     def test_edge_replacement_validates_the_final_topology(self):

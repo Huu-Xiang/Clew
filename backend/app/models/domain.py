@@ -11,7 +11,7 @@ TopicState = Literal["not_started", "learning", "shaky", "solid", "mastered", "n
 EdgeRelation = Literal["requires", "supports", "bridges", "extends", "reviews"]
 GraphLanguage = Literal["en", "uk", "ru", "zh-CN"]
 ReasoningEffort = Literal["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"]
-ChatAction = Literal["answer", "propose_ingest", "propose_expand"]
+ChatAction = Literal["answer", "propose_ingest", "propose_expand", "propose_distillation"]
 MemoryMode = Literal["balanced", "max", "custom"]
 OperationType = Literal[
     "upsert_topic",
@@ -352,6 +352,21 @@ class AgentActivity(BaseModel):
     detail: str = ""
 
 
+class DistillationSummary(BaseModel):
+    topic_id: str
+    title: str
+    body: str
+    applied: bool = False
+    artifact_id: str | None = None
+
+
+class DistillationCard(BaseModel):
+    distillation_id: str
+    summary: DistillationSummary | None = None
+    proposal: "ProposalGenerateResponse | None" = None
+    proposal_applied: bool = False
+
+
 class ChatMessage(BaseModel):
     id: str | None = None
     role: ChatRole
@@ -367,6 +382,7 @@ class ChatMessage(BaseModel):
     planning_error: str | None = None
     proposal_applied: bool = False
     proposal: "ProposalGenerateResponse | None" = None
+    distillation: DistillationCard | None = None
     inline_quiz: InlineChatQuiz | None = None
     question: AgentQuestion | None = None
     closure_quiz: TopicQuizSessionPublic | None = None

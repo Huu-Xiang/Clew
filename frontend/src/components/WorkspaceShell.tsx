@@ -197,6 +197,7 @@ type TopicDetailsProps = {
   quizLoading: boolean;
   startQuiz: () => Promise<void>;
   markTopicFinished: () => Promise<void>;
+  distillAfterQuiz?: () => Promise<void>;
 };
 
 type AssistantWorkspaceProps = {
@@ -1445,7 +1446,21 @@ export function WorkspaceShell(props: WorkspaceShellProps): React.JSX.Element {
                           </div>
                         )}
                         {quizError ? <div className="topicPopoverNotice topicPopoverNoticeBad">{quizError}</div> : null}
-                        {quizSuccess ? <div className="topicPopoverNotice">{quizSuccess}</div> : null}
+                        {quizSuccess ? (
+                          <div className="topicPopoverNotice">
+                            <div>{quizSuccess}</div>
+                            {topicDetails.distillAfterQuiz && agentControls.authenticated ? (
+                              <button
+                                className="topicPopoverDistillBtn"
+                                disabled={chatLoading}
+                                onClick={() => void topicDetails.distillAfterQuiz?.()}
+                                type="button"
+                              >
+                                {copy.sessions.distillAfterQuiz}
+                              </button>
+                            ) : null}
+                          </div>
+                        ) : null}
                         {!(selectedTopicClosed && !closureTestsEnabled) ? (
                           <button
                             className="topicPopoverPrimary"

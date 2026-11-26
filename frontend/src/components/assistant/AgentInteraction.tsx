@@ -1,6 +1,6 @@
 import { useState } from "react";
 import type { AppCopy } from "../../lib/appCopy";
-import type { AgentQuestion, InlineChatQuiz, TopicQuizSession } from "../../lib/types";
+import type { AgentQuestion, DistillationCard, InlineChatQuiz, ProposalGenerateResponse, TopicQuizSession } from "../../lib/types";
 import { renderDisplayText } from "../../lib/appUiHelpers";
 
 export type AgentControls = {
@@ -10,6 +10,13 @@ export type AgentControls = {
   authenticated: boolean;
   connect: () => void;
   openQuiz: (session: TopicQuizSession) => void;
+  distillConversation?: () => Promise<void>;
+  applyDistillationSummary?: (messageId: string) => Promise<void>;
+  applyDistillationAll?: (messageId: string, distillation: DistillationCard) => Promise<void>;
+  applyDistillationProposal?: (messageId: string, proposal: ProposalGenerateResponse) => Promise<void>;
+  distillSummaryLoadingId?: string | null;
+  revertMessage?: (messageId: string) => Promise<void>;
+  revertLoadingMessageId?: string | null;
 };
 export function AgentInteraction({ question, quiz, controls, copy }: {
   question?: AgentQuestion | null; quiz?: InlineChatQuiz | null; controls: AgentControls; copy: AppCopy;

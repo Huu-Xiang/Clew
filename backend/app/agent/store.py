@@ -53,6 +53,19 @@ class AgentStore:
             conn.execute("DELETE FROM agent_transcripts WHERE session_id=?", (session_id,))
             conn.execute("DELETE FROM agent_tool_results WHERE thread_id=?", (session_id,))
 
+    def reset_after_revert(self, session_id: str) -> None:
+        """Clear model transcript and tool receipts after truncating messages while keeping agent_events monotonic."""
+        with self.repository._connect() as conn:
+            conn.execute("DELETE FROM agent_transcripts WHERE session_id=?", (session_id,))
+            conn.execute("DELETE FROM agent_tool_results WHERE thread_id=?", (session_id,))
+            conn.execute(
+                """INSERT INTO agent_sessions (session_id, run_id, status, turn_id, error, client_message_id)
+                VALUES (?, NULL, 'idle', NULL, NULL, NULL)
+                ON CONFLICT(session_id) DO UPDATE SET
+                run_id=NULL, status='idle', turn_id=NULL, error=NULL, client_message_id=NULL""",
+                (session_id,),
+            )
+
     def binding(self, session_id: str) -> dict:
         with self.repository._connect() as conn:
             row = conn.execute("SELECT * FROM agent_sessions WHERE session_id=?", (session_id,)).fetchone()

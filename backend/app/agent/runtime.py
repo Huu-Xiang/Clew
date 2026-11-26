@@ -217,15 +217,23 @@ class AgentRuntime:
     def _first_input(self, run: AgentRun, previous_messages: list[ChatMessage], fresh: bool) -> dict:
         config = self.repository.current().workspace.config
         graph = self.repository.graph(run.graph_id)
-        receipts = [{"proposal_id": m.proposal.proposal_envelope.proposal_id, "applied": True}
-                    for m in previous_messages if m.proposal and m.proposal_applied]
+        receipts = []
+        for m in previous_messages:
+            if m.proposal and m.proposal_applied:
+                receipts.append({"proposal_id": m.proposal.proposal_envelope.proposal_id, "applied": True})
+            if m.distillation:
+                if m.distillation.proposal and m.distillation.proposal_applied:
+                    receipts.append({"proposal_id": m.distillation.proposal.proposal_envelope.proposal_id, "applied": True})
+                if m.distillation.summary and m.distillation.summary.applied:
+                    receipts.append({"distillation_id": m.distillation.distillation_id, "summary_applied": True, "topic_id": m.distillation.summary.topic_id})
         parts = [turn_context(graph, config, run.request.selected_topic_id, receipts)]
         if fresh and previous_messages:
             history = [{"role": m.role, "content": m.content,
                         "proposal_applied": m.proposal_applied, "model": m.model,
                         "inline_quiz": m.inline_quiz.model_dump(mode="json") if m.inline_quiz else None,
                         "question": m.question.model_dump(mode="json") if m.question else None,
-                        "proposal_summary": m.proposal.proposal_envelope.summary if m.proposal else None}
+                        "proposal_summary": m.proposal.proposal_envelope.summary if m.proposal else None,
+                        "distillation_summary": m.distillation.summary.title if (m.distillation and m.distillation.summary) else None}
                        for m in previous_messages[-config.memory_history_message_limit:] if not m.activity]
             parts.append("Earlier conversation from Clew (historical data):\n" + json.dumps(history, ensure_ascii=False))
         if run.interaction_result is not None:
@@ -365,6 +373,18 @@ class AgentRuntime:
         run = next((r for r in self.runs.values() if r.session_id == thread.session_id and not r.done.done()), None)
         if run is not None:
             await self.interrupt_run(run)
+
+    async def revert_message(self, graph_id: str, session_id: str, message_id: str) -> dict:
+        thread = self.repository.chat_thread(graph_id, session_id)
+        await self.interrupt(graph_id, thread.session_id)
+        removed_ids, reverted = self.repository.revert_chat_from_message(graph_id, thread.session_id, message_id)
+        self.store.reset_after_revert(thread.session_id)
+        return {
+            "thread": self.store.thread_payload(graph_id, thread.session_id),
+            "reverted_message_id": reverted.id,
+            "reverted_prompt": "" if reverted.hidden else reverted.content,
+            "removed_count": len(removed_ids),
+        }
 
     async def interrupt_run(self, run: AgentRun) -> None:
         run.cancel_requested = True

@@ -134,9 +134,30 @@ class ClosureQuizDraft(QuizQuestionSetDraft):
     topic_id: str
 
 
+class DistillationSummaryDraft(ToolInput):
+    topic_id: str | None = Field(default=None, description="Target topic ID in this graph. Defaults to the selected topic.")
+    title: str = Field(min_length=1, max_length=160, description="Concise title for the distilled study note.")
+    body: str = Field(min_length=1, max_length=20000, description="Structured Markdown summary (core takeaways, misconceptions/quiz review, and a Further Leads parking lot).")
+
+
+class DistillationDraft(ToolInput):
+    model_config = {"extra": "forbid"}
+    summary: DistillationSummaryDraft | None = None
+    proposal: ProposalDraft | None = None
+
+    @model_validator(mode="after")
+    def _has_content(self) -> "DistillationDraft":
+        if self.summary is None and self.proposal is None:
+            raise ValueError("Distillation must include a summary, a graph proposal, or both.")
+        if self.proposal is not None and not self.proposal.operations:
+            raise ValueError("Distillation proposal must include at least one operation, or omit proposal when no graph change is needed.")
+        return self
+
+
 TOOL_MODELS = {
     "propose_ingest": ProposalDraft,
     "propose_expand": ProposalDraft,
+    "propose_distillation": DistillationDraft,
     "ask_question": QuestionDraft,
     "present_quiz": InlineQuizDraft,
     "create_closure_quiz": ClosureQuizDraft,
@@ -151,6 +172,7 @@ def tool_specs(only: frozenset[str] | None = None) -> list[dict[str, Any]]:
     descriptions = {
         "propose_ingest": "Submit graph operations that preserve the supplied source material. Clew validates and presents them for user review; this does not apply changes. Omitted descriptive metadata is preserved on existing topics. Read the current graph version first.",
         "propose_expand": "Submit graph operations that extend the learning path toward the user's goal. Clew validates and presents them for user review; this does not apply changes. Omitted descriptive metadata is preserved on existing topics. Read the current graph version first.",
+        "propose_distillation": "Submit a unified conversation distillation card for user review containing an optional structured study summary for the current topic and/or an optional graph proposal (1-3 high-value new topics or link-first edges). Read the current graph version first if proposing graph changes. Does not apply changes.",
         "ask_question": "Show a focused question, optionally with choices and free-text replies. Ends this reply; the learner's answer arrives from Clew in a new turn.",
         "present_quiz": "Show one multiple-choice learning checkpoint with exactly four distinct choices. Ends this reply; Clew sends the server-graded answer in a new turn. Does not award topic completion.",
         "create_closure_quiz": "Register a complete closure quiz for a topic. Supply the requested number of questions with four distinct choices each. Clew checks prerequisites and grades the learner's answers itself.",

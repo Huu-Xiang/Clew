@@ -46,6 +46,17 @@ export function AssistantComposer({
       {chatSessionsError ? <div className="inlineNotice inlineNoticeError">{copy.errors.request(copy.errors.loadChatSessions, chatSessionsError)}</div> : null}
       {applyError ? <div className="inlineNotice inlineNoticeError">{applyError}</div> : null}
       <div className="assistantTemplates">
+        {agentControls.distillConversation ? (
+          <button
+            className="assistantTemplate assistantTemplateDistill"
+            disabled={chatLoading || chatThreadLoading || !agentControls.authenticated || currentChatState.messages.every((message) => message.hidden)}
+            onClick={() => void agentControls.distillConversation?.()}
+            title={copy.sessions.distillTitle}
+            type="button"
+          >
+            {copy.sessions.distillButton}
+          </button>
+        ) : null}
         {assistantTemplates.map((template) => (
           <button
             key={template.id}

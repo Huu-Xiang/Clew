@@ -40,6 +40,7 @@ import { useWorkspaceChromeState } from "./hooks/useWorkspaceChromeState";
 import { useTopicPopover } from "./hooks/useTopicPopover";
 import { useModalAccessibility } from "./lib/useModalAccessibility";
 import type {
+  ChatMessage,
   CreateGraphRequest,
   GraphEnvelope,
   GraphAssessment,
@@ -138,6 +139,9 @@ export default function WorkspaceApp({ chatgpt, ...preference }: { chatgpt: Chat
     }
   });
   const [applyLoadingMessageId, setApplyLoadingMessageId] = useState<string | null>(null);
+  const [distillSummaryLoadingId, setDistillSummaryLoadingId] = useState<string | null>(null);
+  const [revertLoadingMessageId, setRevertLoadingMessageId] = useState<string | null>(null);
+  const pendingDistillRef = useRef<{ sessionId: string; prompt: string } | null>(null);
   const [applyError, setApplyError] = useState<string | null>(null);
   const [assistantResizing, setAssistantResizing] = useState(false);
   const [configSaving, setConfigSaving] = useState(false);
@@ -457,7 +461,7 @@ export default function WorkspaceApp({ chatgpt, ...preference }: { chatgpt: Chat
     clearChatStateForGraph,
     loadSessions,
     sendChat,
-    answerInteraction, stopChat, reconnectChat,
+    answerInteraction, stopChat, revertMessage, reconnectChat,
   } = useGraphChatController({
     activeGraph,
     selectedTopicId,
@@ -953,6 +957,122 @@ export default function WorkspaceApp({ chatgpt, ...preference }: { chatgpt: Chat
     }
   }
 
+  async function applyDistillationSummary(messageId: string): Promise<ChatMessage | null> {
+    const sessionId = currentChatState.sessionId ?? activeSessionId;
+    if (!activeGraph || !sessionId) return null;
+    setDistillSummaryLoadingId(messageId);
+    setApplyError(null);
+    try {
+      const response = await apiFetch(`${API_BASE}/api/v1/graphs/${activeGraph.graph_id}/chat/distill/apply-summary`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ session_id: sessionId, message_id: messageId }),
+      });
+      if (!response.ok) {
+        throw new Error(await readErrorMessage(response, copy.sessions.distillationSaveSummaryFailed));
+      }
+      const payload = (await response.json()) as { workspace: WorkspaceEnvelope; message: ChatMessage };
+      setData(payload.workspace);
+      void loadSnapshots();
+      updateCurrentChatState((current) => ({
+        ...current,
+        messages: current.messages.map((message) => message.id === messageId ? payload.message : message),
+      }));
+      return payload.message;
+    } catch (saveError) {
+      setApplyError(copy.errors.request(copy.sessions.distillationSaveSummaryFailed, saveError instanceof Error ? saveError.message : ""));
+      return null;
+    } finally {
+      setDistillSummaryLoadingId(null);
+    }
+  }
+
+  async function applyDistillationProposal(messageId: string, proposal: ProposalGenerateResponse): Promise<void> {
+    if (!activeGraph) return;
+    setApplyLoadingMessageId(messageId);
+    setApplyError(null);
+    try {
+      const response = await apiFetch(`${API_BASE}/api/v1/graphs/${activeGraph.graph_id}/apply`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(proposal.proposal_envelope),
+      });
+      if (!response.ok) {
+        throw new Error(await readErrorMessage(response, copy.errors.applyProposal));
+      }
+      const payload = (await response.json()) as WorkspaceEnvelope;
+      setData(payload);
+      setActiveGraphId(proposal.proposal_envelope.graph_id);
+      void loadSnapshots();
+      updateCurrentChatState((current) => ({
+        ...current,
+        messages: current.messages.map((message) =>
+          message.id === messageId && message.distillation
+            ? { ...message, distillation: { ...message.distillation, proposal_applied: true } }
+            : message,
+        ),
+      }));
+    } catch (applyLoadError) {
+      setApplyError(copy.errors.request(copy.errors.applyProposal, applyLoadError instanceof Error ? applyLoadError.message : ""));
+    } finally {
+      setApplyLoadingMessageId(null);
+    }
+  }
+
+  async function applyDistillationAll(messageId: string, distillation: NonNullable<ChatMessage["distillation"]>): Promise<void> {
+    let nextProposal = distillation.proposal ?? null;
+    if (distillation.summary && !distillation.summary.applied) {
+      const updated = await applyDistillationSummary(messageId);
+      if (!updated) return;
+      nextProposal = updated.distillation?.proposal ?? nextProposal;
+    }
+    if (nextProposal && !distillation.proposal_applied && nextProposal.apply_plan.validation.ok) {
+      await applyDistillationProposal(messageId, nextProposal);
+    }
+  }
+
+  async function distillConversation(): Promise<void> {
+    if (!activeGraph) return;
+    const activeSessionTopicId = chatSessions.find((session) => session.session_id === (currentChatState.sessionId ?? activeSessionId))?.topic_id ?? null;
+    const targetTopicId = activeSessionTopicId ?? selectedTopicId;
+    const targetTopic = targetTopicId ? activeGraph.topics.find((topic) => topic.id === targetTopicId) ?? null : null;
+    const prompt = targetTopic ? copy.sessions.distillPromptTopic(targetTopic.title) : copy.sessions.distillPromptGraph;
+    await sendChat(prompt);
+  }
+
+  async function handleRevertMessage(messageId: string): Promise<void> {
+    setRevertLoadingMessageId(messageId);
+    try {
+      const restored = await revertMessage(messageId);
+      if (restored !== null) {
+        window.requestAnimationFrame(() => chatComposerRef.current?.focus());
+      }
+    } finally {
+      setRevertLoadingMessageId(null);
+    }
+  }
+
+  async function distillAfterQuiz(): Promise<void> {
+    if (!activeGraph || !selectedTopic) return;
+    setAssistantWidth((current) => Math.max(current, ASSISTANT_MIN_WIDTH));
+    const prompt = copy.sessions.distillPromptTopic(selectedTopic.title);
+    const matchingSession = chatSessions.find((session) => session.topic_id === selectedTopic.id);
+    if (matchingSession && activeSessionId !== matchingSession.session_id) {
+      pendingDistillRef.current = { sessionId: matchingSession.session_id, prompt };
+      setActiveSessionId(matchingSession.session_id);
+      return;
+    }
+    await sendChat(prompt);
+  }
+
+  useEffect(() => {
+    const pending = pendingDistillRef.current;
+    if (!pending) return;
+    if (currentChatState.sessionId !== pending.sessionId || chatThreadLoading || chatLoading) return;
+    pendingDistillRef.current = null;
+    void sendChat(pending.prompt);
+  }, [currentChatState.sessionId, chatThreadLoading, chatLoading, sendChat]);
+
   async function startQuiz(): Promise<void> {
     if (!activeGraph || !selectedTopic) return;
     const requestId = ++quizRequestRef.current;
@@ -1330,6 +1450,7 @@ export default function WorkspaceApp({ chatgpt, ...preference }: { chatgpt: Chat
           quizLoading,
           startQuiz,
           markTopicFinished,
+          distillAfterQuiz,
         }}
         assistant={{
           agentControls: {
@@ -1344,6 +1465,13 @@ export default function WorkspaceApp({ chatgpt, ...preference }: { chatgpt: Chat
               setQuizReviews(null);
               setQuizError(null);
             },
+            distillConversation,
+            applyDistillationSummary: async (messageId) => { await applyDistillationSummary(messageId); },
+            applyDistillationAll,
+            applyDistillationProposal,
+            distillSummaryLoadingId,
+            revertMessage: handleRevertMessage,
+            revertLoadingMessageId,
           },
           assistantResizing,
           handleAssistantResize,
