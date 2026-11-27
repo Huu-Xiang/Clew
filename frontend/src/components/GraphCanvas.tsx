@@ -638,13 +638,61 @@ function GraphCanvasComponent({
   useEffect(() => {
     if (staticLayout) return;
     if (nodePositions && Object.keys(nodePositions).length > 0) {
-      manualPositionsRef.current = cloneManualNodePositions(nodePositions);
+      const nextManual = cloneManualNodePositions(nodePositions);
+      manualPositionsRef.current = nextManual;
+      if (!layoutEditMode && !draggedNodeRef.current) {
+        let maxDelta = 0;
+        let minX = Infinity;
+        let maxX = -Infinity;
+        let minY = Infinity;
+        let maxY = -Infinity;
+        let count = 0;
+        for (const [id, target] of Object.entries(nextManual)) {
+          const prev = nodesRef.current.get(id);
+          if (prev) {
+            maxDelta = Math.max(maxDelta, Math.hypot(target.x - prev.x, target.y - prev.y));
+          } else {
+            maxDelta = Math.max(maxDelta, 999);
+          }
+          nodesRef.current.set(id, { x: target.x, y: target.y, vx: 0, vy: 0 });
+          positionCache.set(cacheEntryKey(graphCacheKey, id), { x: target.x, y: target.y });
+          minX = Math.min(minX, target.x);
+          maxX = Math.max(maxX, target.x);
+          minY = Math.min(minY, target.y);
+          maxY = Math.max(maxY, target.y);
+          count += 1;
+        }
+        if (maxDelta > 1 && count > 0) {
+          labelPlacementRef.current.clear();
+          zoneGeometryRef.current.clear();
+          idleFrozenRef.current = false;
+          idleFrozenFrameRef.current = null;
+          idleSettleFramesRef.current = 0;
+          lastEmittedAnchorRef.current = null;
+          const wrap = containerRef.current;
+          if (wrap) {
+            const rect = wrap.getBoundingClientRect();
+            if (rect.width >= 100 && rect.height >= 100) {
+              const padX = Math.max(90, rect.width * 0.14);
+              const padY = Math.max(90, rect.height * 0.16);
+              const boundsW = Math.max(240, maxX - minX);
+              const boundsH = Math.max(200, maxY - minY);
+              const fitZoom = Math.min((rect.width - padX * 2) / boundsW, (rect.height - padY * 2) / boundsH);
+              zoomRef.current = clamp(fitZoom, 0.22, 1.4);
+              panOffsetRef.current = {
+                x: rect.width / 2 - (minX + maxX) / 2,
+                y: rect.height / 2 - (minY + maxY) / 2,
+              };
+            }
+          }
+        }
+      }
       return;
     }
     if (!layoutEditMode) {
       manualPositionsRef.current = null;
     }
-  }, [layoutEditMode, nodePositions, staticLayout]);
+  }, [graphCacheKey, layoutEditMode, nodePositions, staticLayout]);
 
   useEffect(() => {
     const wrap = containerRef.current;
