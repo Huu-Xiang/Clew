@@ -1539,31 +1539,33 @@ export function WorkspaceShell(props: WorkspaceShellProps): React.JSX.Element {
                             ) : null}
                           </details>
                         ) : null}
-                        {!(selectedTopicClosed && !closureTestsEnabled) ? (
-                          <button
-                            className="topicPopoverPrimary"
-                            disabled={quizLoading || (closureTestsEnabled && !selectedClosureStatus.can_award_completion)}
-                            onClick={() => void (closureTestsEnabled ? startQuiz() : markTopicFinished())}
-                            type="button"
-                            title={closureTestsEnabled && !selectedClosureStatus.can_award_completion ? copy.closure.closePrerequisitesFirst : undefined}
-                          >
-                            {quizLoading
-                              ? (closureTestsEnabled ? copy.closure.generatingQuiz : copy.closure.markingAsFinished)
-                              : closureTestsEnabled && !selectedClosureStatus.can_award_completion
-                                ? copy.closure.closePrerequisitesFirst
-                                : (closureTestsEnabled ? copy.closure.startClosureQuiz : copy.closure.markAsFinished)}
-                          </button>
-                        ) : null}
-                        {closureTestsEnabled && !selectedTopicClosed ? (
-                          <button
-                            className="topicPopoverSkipBtn"
-                            disabled={quizLoading}
-                            onClick={() => void markTopicFinished()}
-                            type="button"
-                          >
-                            {quizLoading ? copy.closure.markingAsFinished : copy.closure.skipTopic}
-                          </button>
-                        ) : null}
+                        <div className="topicPopoverActions">
+                          {!(selectedTopicClosed && !closureTestsEnabled) ? (
+                            <button
+                              className="topicPopoverPrimary"
+                              disabled={quizLoading || (closureTestsEnabled && !selectedClosureStatus.can_award_completion)}
+                              onClick={() => void (closureTestsEnabled ? startQuiz() : markTopicFinished())}
+                              type="button"
+                              title={closureTestsEnabled && !selectedClosureStatus.can_award_completion ? copy.closure.closePrerequisitesFirst : undefined}
+                            >
+                              {quizLoading
+                                ? (closureTestsEnabled ? copy.closure.generatingQuiz : copy.closure.markingAsFinished)
+                                : closureTestsEnabled && !selectedClosureStatus.can_award_completion
+                                  ? copy.closure.closePrerequisitesFirst
+                                  : (closureTestsEnabled ? copy.closure.startClosureQuiz : copy.closure.markAsFinished)}
+                            </button>
+                          ) : null}
+                          {closureTestsEnabled && !selectedTopicClosed ? (
+                            <button
+                              className="topicPopoverSkipBtn"
+                              disabled={quizLoading}
+                              onClick={() => void markTopicFinished()}
+                              type="button"
+                            >
+                              {quizLoading ? copy.closure.markingAsFinished : copy.closure.skipTopic}
+                            </button>
+                          ) : null}
+                        </div>
                       </div>
                     ) : null}
                   </div>

@@ -212,7 +212,7 @@ export const APP_COPY_ZH_CN = {
     startClosureQuiz: "开始主题测验",
     markAsFinished: "标记为已完成",
     markingAsFinished: "正在标记…",
-    skipTopic: "跳过 · 标记已掌握",
+    skipTopic: "跳过 · 已掌握",
     recentMistakes: (count) => `最近错题复盘（${count} 题）`,
     reviewMistakesWithAi: "让 AI 帮我复盘错题",
   },

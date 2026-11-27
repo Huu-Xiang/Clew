@@ -210,7 +210,7 @@ export const APP_COPY = {
     startClosureQuiz: "Start closure quiz",
     markAsFinished: "Mark as finished",
     markingAsFinished: "Marking...",
-    skipTopic: "Skip · mark as mastered",
+    skipTopic: "Skip · mastered",
     recentMistakes: (count: number) => `Recent mistakes (${count})`,
     reviewMistakesWithAi: "Review mistakes with AI",
   },
