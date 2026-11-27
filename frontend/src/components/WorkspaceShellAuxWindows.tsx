@@ -80,7 +80,9 @@ export function AssistantModelMenuTrigger({
                   setOpen(false);
                 }}
               >
-                <span className="assistantModelMenuItemLabel">{modelId}</span>
+                <span className="assistantModelMenuItemLabel">
+                  {modelId.startsWith("custom:") ? modelId.split(":").slice(2).join(":") : modelId}
+                </span>
                 {active ? <Check size={12} weight="bold" aria-hidden="true" /> : null}
               </button>
             );

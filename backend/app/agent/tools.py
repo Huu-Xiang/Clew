@@ -16,7 +16,9 @@ from app.agent.contracts import (
     QuestionDraft,
     ReadMaterialDraft,
     SearchMaterialsDraft,
+    WebSearchDraft,
 )
+from app.agent.providers import execute_external_web_search
 from app.models.domain import AgentActivity, AgentQuestion, ChatMessage, DistillationCard, DistillationSummary, InlineChatQuiz, QuizQuestion, TopicQuizSessionPublic
 from app.services.material_service import MaterialService
 from app.services.proposal_service import ProposalService
@@ -32,6 +34,7 @@ LABELS = {
     "list_materials": "Listing local materials",
     "search_materials": "Searching local materials",
     "read_material": "Reading local material",
+    "web_search": "Searching the web",
     "propose_ingest": "Preparing a graph proposal",
     "propose_expand": "Preparing a graph proposal",
     "propose_distillation": "Distilling this conversation",
@@ -89,6 +92,20 @@ async def execute_tool(runtime: AgentRuntime, run: AgentRun, tool: str, call_id:
         elif tool == "read_material":
             assert isinstance(parsed, ReadMaterialDraft)
             result = MaterialService().read_slice(graph, source_id=parsed.source_id, path=parsed.path, start=parsed.start, end=parsed.end)
+        elif tool == "web_search":
+            assert isinstance(parsed, WebSearchDraft)
+            ws_cfg = runtime.providers.get_web_search()
+            ws_key = runtime.providers.get_web_search_api_key()
+            if not ws_cfg or not ws_cfg.enabled or not ws_key:
+                raise ValueError("Custom web search is not configured in Settings.")
+            run.web_searched = True
+            result = await execute_external_web_search(
+                provider=ws_cfg.provider,
+                api_key=ws_key,
+                query=parsed.query,
+                max_results=parsed.max_results,
+                http=runtime.provider_http,
+            )
         elif tool in {"propose_ingest", "propose_expand"}:
             assert isinstance(parsed, ProposalDraft)
             proposal = ProposalService().prepare(graph, parsed, tool=tool, proposal_id=f"prop-{call_id}",

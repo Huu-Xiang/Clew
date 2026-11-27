@@ -393,12 +393,54 @@ export type ProposalGenerateResponse = {
 };
 
 export type ReasoningEffort = "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max" | "ultra";
+export type CustomProviderKind = "anthropic" | "openai_compatible";
+export type WebSearchKind = "tavily" | "brave";
+
+export type CustomProviderProfile = {
+  id: string;
+  name: string;
+  kind: CustomProviderKind;
+  base_url: string;
+  models: string[];
+  key_hint: string;
+  has_key: boolean;
+  enabled: boolean;
+  supports_native_web_search: boolean;
+};
+
+export type WebSearchProfile = {
+  provider: WebSearchKind;
+  key_hint: string;
+  has_key: boolean;
+  enabled: boolean;
+};
+
+export type ProviderPreset = {
+  id: string;
+  label: string;
+  kind: CustomProviderKind;
+  base_url: string;
+  default_models: string[];
+  supports_native_web_search: boolean;
+};
+
+export type ProvidersSummary = {
+  profiles: CustomProviderProfile[];
+  web_search: WebSearchProfile | null;
+  presets: ProviderPreset[];
+};
+
 export type ChatGPTModel = {
   id: string;
   model: string;
   displayName: string;
   description: string;
   isDefault: boolean;
+  providerId?: string;
+  providerName?: string;
+  providerKind?: "chatgpt" | CustomProviderKind;
+  supportsWebSearch?: boolean;
+  supportsReasoningEffort?: boolean;
 };
 export type ChatGPTLogin = {
   loginId: string;
@@ -414,6 +456,11 @@ export type ChatGPTAccount = {
   login: ChatGPTLogin | null;
   error: string | null;
   models: ChatGPTModel[];
+  ready?: boolean;
+  has_custom_providers?: boolean;
+  custom_providers?: CustomProviderProfile[];
+  web_search_config?: WebSearchProfile | null;
+  web_search_configured?: boolean;
 };
 
 export type WorkspaceConfig = {

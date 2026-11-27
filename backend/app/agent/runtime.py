@@ -7,9 +7,17 @@ from dataclasses import dataclass, field
 from uuid import uuid4
 
 from app.agent.chatgpt_api import ChatGPTClient
-from app.agent.chatgpt_auth import CALLBACK_PATH, ChatGPTAuth, ChatGPTError, KeyringCredentialStore
+from app.agent.chatgpt_auth import CALLBACK_PATH, ChatGPTAuth, ChatGPTError, CredentialStore, KeyringCredentialStore
 from app.agent.context import BASE_INSTRUCTIONS, developer_instructions, turn_context
 from app.agent.contracts import CLOSURE_QUIZ_TOOLS, tool_specs
+from app.agent.providers import (
+    AnthropicClient,
+    OpenAICompatibleClient,
+    ProviderKeyringStore,
+    ProviderRegistry,
+    is_local_base_url,
+    parse_custom_model,
+)
 from app.agent.store import AgentStore
 from app.core.config import Settings
 from app.core.locale import AppLocale
@@ -52,11 +60,26 @@ class AgentRun:
         return self.session_id or self.id
 
 
+class _InMemoryCredentialStore:
+    def __init__(self):
+        self._value: dict | None = None
+
+    def read(self) -> dict | None:
+        return dict(self._value) if isinstance(self._value, dict) else None
+
+    def write(self, value: dict) -> None:
+        self._value = dict(value)
+
+    def delete(self) -> None:
+        self._value = None
+
+
 class AgentRuntime:
-    """Clew's agent loop on the Responses API, billed to the learner's ChatGPT plan."""
+    """Clew's agent loop supporting ChatGPT OAuth plus custom Anthropic and OpenAI-compatible providers."""
 
     def __init__(self, settings: Settings, repository: GraphRepository, auth: ChatGPTAuth | None = None,
-                 client: ChatGPTClient | None = None):
+                 client: ChatGPTClient | None = None, provider_store: CredentialStore | None = None,
+                 provider_http=None):
         self.settings = settings
         self.repository = repository
         self.store = AgentStore(repository)
@@ -67,6 +90,17 @@ class AgentRuntime:
                                         registration_path=settings.db_path.parent / "chatgpt-registration.json",
                                         store=KeyringCredentialStore(credential_account))
         self.client = client or ChatGPTClient(self.auth)
+        if provider_store is not None:
+            resolved_provider_store = provider_store
+        elif auth is not None:
+            # Isolated tests inject a fake auth store; keep custom provider secrets isolated in-memory too.
+            resolved_provider_store = _InMemoryCredentialStore()
+        else:
+            provider_account = ("desktop-" + hashlib.sha256(str(settings.db_path.resolve()).encode("utf-8")).hexdigest()[:32]
+                                if settings.desktop_token else "custom-providers")
+            resolved_provider_store = ProviderKeyringStore(provider_account)
+        self.providers = ProviderRegistry(repository, resolved_provider_store)
+        self.provider_http = provider_http
         self.runs: dict[str, AgentRun] = {}
         self.wake = asyncio.Event()
 
@@ -75,28 +109,75 @@ class AgentRuntime:
     def _active(self) -> bool:
         return any(run.status in ACTIVE for run in self.runs.values())
 
+    def has_custom_provider(self) -> bool:
+        return self.providers.has_ready_provider()
+
+    async def _chatgpt_models(self) -> list[dict]:
+        return [
+            {
+                "id": m["slug"],
+                "model": m["slug"],
+                "displayName": m["display_name"],
+                "description": m.get("description") or "",
+                "isDefault": index == 0,
+                "providerId": "chatgpt",
+                "providerName": "ChatGPT",
+                "providerKind": "chatgpt",
+                "supportsWebSearch": True,
+                "supportsReasoningEffort": True,
+            }
+            for index, m in enumerate(await self.client.list_models())
+        ]
+
     async def models(self) -> list[dict]:
-        # The plan catalog is ordered by OpenAI; its first listed model is the plan default.
-        return [{"id": m["slug"], "model": m["slug"], "displayName": m["display_name"],
-                 "description": m.get("description") or "", "isDefault": index == 0}
-                for index, m in enumerate(await self.client.list_models())]
+        # Combine ChatGPT plan models (when signed in) with configured custom provider models.
+        combined: list[dict] = []
+        status = self.auth.status()
+        if status["authenticated"] and status["sharing"]:
+            combined.extend(await self._chatgpt_models())
+        custom_models = self.providers.catalog_models()
+        combined.extend(custom_models)
+        if combined and not any(m.get("isDefault") for m in combined):
+            combined[0] = {**combined[0], "isDefault": True}
+        return combined
 
     async def account(self, locale: AppLocale = "en") -> dict:
         status = self.auth.status(locale)
         login = self.auth.pending or self.auth.completing
-        result = {"connected": True, **status, "models": [],
-                  "login": {"loginId": login.login_id, "authUrl": login.auth_url,
-                            "phase": "completing" if self.auth.completing is login else "pending"} if login else None}
+        custom_summary = self.providers.public_summary()
+        has_custom = self.has_custom_provider()
+        result = {
+            "connected": True,
+            **status,
+            "models": [],
+            "custom_providers": custom_summary["profiles"],
+            "web_search_config": custom_summary["web_search"],
+            "has_custom_providers": has_custom,
+            "web_search_configured": self.providers.has_custom_web_search(),
+            "ready": bool((status["authenticated"] and status["sharing"]) or has_custom),
+            "login": {"loginId": login.login_id, "authUrl": login.auth_url,
+                      "phase": "completing" if self.auth.completing is login else "pending"} if login else None,
+        }
+        combined: list[dict] = []
         if status["authenticated"] and status["sharing"]:
             try:
-                result["models"] = await self.models()
+                fetched = await self.models()
             except ChatGPTError as exc:
                 result.update(self.auth.status(locale))
                 result["error"] = exc.public_message(locale)
+                combined = self.providers.catalog_models()
             else:
                 result.update(self.auth.status(locale))
                 if not result["authenticated"] or not result["sharing"]:
-                    result["models"] = []
+                    combined = self.providers.catalog_models()
+                else:
+                    combined = fetched
+        else:
+            combined = self.providers.catalog_models()
+        if combined and not any(m.get("isDefault") for m in combined):
+            combined[0] = {**combined[0], "isDefault": True}
+        result["models"] = combined
+        result["ready"] = bool((result["authenticated"] and result["sharing"]) or has_custom)
         return result
 
     async def start_login(self, locale: AppLocale = "en") -> dict:
@@ -112,14 +193,24 @@ class AgentRuntime:
         return await self.auth.logout(locale)
 
     async def _select_model(self, requested: str | None) -> str:
-        models = await self.models()
         selected = requested or self.repository.current().workspace.config.default_model
+        if selected and parse_custom_model(selected):
+            profile_id, model_id = parse_custom_model(selected)  # type: ignore[misc]
+            profile = self.providers.get_profile(profile_id)
+            if not profile or not profile.enabled or model_id not in profile.models:
+                raise agent_error(f"The selected custom model is not configured: {selected}. Choose another model.")
+            if not self.providers.get_api_key(profile_id) and not (
+                profile.kind == "openai_compatible" and is_local_base_url(profile.base_url)
+            ):
+                raise agent_error(f"Missing API key for provider {profile.name}. Re-enter it in Settings.")
+            return selected
+        models = await self.models()
         if selected is None:
             if not models:
-                raise agent_error("Your ChatGPT plan lists no models for apps.")
+                raise agent_error("No AI models are available. Sign in with ChatGPT or add a custom API key in Settings.")
             return models[0]["model"]
         if not any(model["model"] == selected for model in models):
-            raise agent_error(f"The selected model is not available on this ChatGPT plan: {selected}. Choose another model.")
+            raise agent_error(f"The selected model is not available on your connected providers: {selected}. Choose another model.")
         return selected
 
     # Turns
@@ -251,19 +342,77 @@ class AgentRuntime:
             run.model = await self._select_model(run.request.model or run.model or None)
             config = self.repository.current().workspace.config
             has_materials = bool(self.repository.graph(run.graph_id).material_sources)
-            tools = tool_specs(CLOSURE_QUIZ_TOOLS if run.session_id is None else None, include_materials=has_materials)
+            custom_target = parse_custom_model(run.model)
+            custom_profile = self.providers.get_profile(custom_target[0]) if custom_target else None
+            if custom_target and custom_profile is None:
+                raise agent_error(f"Configured provider not found for model {run.model}.")
+
+            if custom_profile is None:
+                protocol = "openai_responses"
+            elif custom_profile.kind == "anthropic":
+                protocol = "anthropic_messages"
+            else:
+                protocol = "openai_chat"
+
+            use_custom_web_search_tool = bool(
+                run.session_id is not None
+                and protocol == "openai_chat"
+                and self.providers.has_custom_web_search()
+            )
+            tools = tool_specs(
+                CLOSURE_QUIZ_TOOLS if run.session_id is None else None,
+                include_materials=has_materials,
+                include_web_search_tool=use_custom_web_search_tool,
+            )
             # Chat turns may search the web; the model decides when. Quiz generation stays offline.
-            if run.session_id is not None:
+            if run.session_id is not None and protocol == "openai_responses":
                 tools.append({"type": "web_search"})
-            transcript = self.store.transcript(run.session_id) if run.session_id else None
+
+            transcript = self.store.transcript(run.session_id, expected_protocol=protocol) if run.session_id else None
             items = list(transcript or [])
             items.append(self._first_input(run, previous_messages, fresh=transcript is None))
-            payload = {"model": run.model, "instructions": BASE_INSTRUCTIONS + "\n" + developer_instructions(config),
-                       "tools": tools, "parallel_tool_calls": False, "include": ["reasoning.encrypted_content"],
-                       **({"reasoning": {"effort": config.reasoning_effort}} if config.reasoning_effort else {})}
+            instructions = BASE_INSTRUCTIONS + "\n" + developer_instructions(config)
+
+            if protocol == "openai_responses":
+                payload = {
+                    "model": run.model,
+                    "instructions": instructions,
+                    "tools": tools,
+                    "parallel_tool_calls": False,
+                    "include": ["reasoning.encrypted_content"],
+                    **({"reasoning": {"effort": config.reasoning_effort}} if config.reasoning_effort else {}),
+                }
+                async def call_model(current_items: list[dict]) -> dict:
+                    return await self.client.stream({**payload, "input": current_items}, lambda event: self._stream_event(run, event))
+            elif protocol == "anthropic_messages":
+                assert custom_profile is not None and custom_target is not None
+                api_key = self.providers.get_api_key(custom_profile.id) or ""
+                anthropic_client = AnthropicClient(api_key=api_key, base_url=custom_profile.base_url, http=self.provider_http)
+                async def call_model(current_items: list[dict]) -> dict:
+                    return await anthropic_client.stream(
+                        model=custom_target[1],
+                        instructions=instructions,
+                        items=current_items,
+                        tools=tools,
+                        enable_web_search=run.session_id is not None,
+                        on_event=lambda event: self._stream_event(run, event),
+                    )
+            else:
+                assert custom_profile is not None and custom_target is not None
+                api_key = self.providers.get_api_key(custom_profile.id) or ""
+                openai_client = OpenAICompatibleClient(api_key=api_key, base_url=custom_profile.base_url, http=self.provider_http)
+                async def call_model(current_items: list[dict]) -> dict:
+                    return await openai_client.stream(
+                        model=custom_target[1],
+                        instructions=instructions,
+                        items=current_items,
+                        tools=tools,
+                        on_event=lambda event: self._stream_event(run, event),
+                    )
+
             self.set_state(run, "running")
             for _ in range(MAX_STEPS):
-                response = await self.client.stream({**payload, "input": items}, lambda event: self._stream_event(run, event))
+                response = await call_model(items)
                 output = [item for item in response.get("output", []) if isinstance(item, dict)]
                 for item in output:
                     if item.get("type") == "message":
@@ -273,7 +422,7 @@ class AgentRuntime:
                 items.extend(output)
                 calls = [item for item in output if item.get("type") == "function_call"]
                 if not calls:
-                    self._save_transcript(run, items)
+                    self._save_transcript(run, items, protocol=protocol)
                     self.finish(run, "completed")
                     return
                 from app.agent.tools import execute_tool
@@ -282,7 +431,7 @@ class AgentRuntime:
                     async with lock:
                         output_text = await execute_tool(self, run, call["name"], call["call_id"], call.get("arguments") or "")
                     items.append({"type": "function_call_output", "call_id": call["call_id"], "output": output_text})
-                self._save_transcript(run, items)
+                self._save_transcript(run, items, protocol=protocol)
                 if run.awaiting_answer:
                     self.finish(run, "completed")
                     return
@@ -295,9 +444,9 @@ class AgentRuntime:
         except Exception as exc:
             self.finish(run, "failed", str(exc))
 
-    def _save_transcript(self, run: AgentRun, items: list[dict]) -> None:
+    def _save_transcript(self, run: AgentRun, items: list[dict], protocol: str = "openai_responses") -> None:
         if run.session_id:
-            self.store.save_transcript(run.session_id, items)
+            self.store.save_transcript(run.session_id, items, protocol=protocol)
 
     def _assistant_message(self, run: AgentRun, item_id: str) -> ChatMessage:
         message = run.messages.get(item_id)

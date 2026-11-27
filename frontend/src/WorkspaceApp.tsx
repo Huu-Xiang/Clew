@@ -1547,7 +1547,7 @@ export default function WorkspaceApp({ chatgpt, ...preference }: { chatgpt: Chat
         assistant={{
           agentControls: {
             answer: answerInteraction, stop: stopChat, reconnect: reconnectChat,
-            authenticated: !!chatgpt.account?.authenticated && !!chatgpt.account?.sharing, connect: () => setSettingsOpen(true),
+            authenticated: Boolean(chatgpt.account?.ready ?? (chatgpt.account?.authenticated && chatgpt.account?.sharing)), connect: () => setSettingsOpen(true),
             openQuiz: (session) => {
               quizRequestRef.current += 1;
               setQuizLoading(false);

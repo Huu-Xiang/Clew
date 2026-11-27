@@ -52,12 +52,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 request.headers.get("x-clew-session", "").encode("utf-8"), settings.desktop_token.encode("utf-8")
             ):
                 return JSONResponse(status_code=403, content={"detail": "This request is not from the Clew desktop app."})
-            if not request.url.path.startswith("/api/v1/chatgpt/"):
-                try:
-                    await request.app.state.agent_runtime.auth.access_token()
-                except ChatGPTError as exc:
-                    return JSONResponse(status_code=503 if exc.retryable else 401,
-                                        content={"detail": exc.public_message(request_locale(request)), "code": exc.code})
+            if request.url.path != "/api/v1/providers" and not request.url.path.startswith(("/api/v1/chatgpt/", "/api/v1/providers/")):
+                if not request.app.state.agent_runtime.has_custom_provider():
+                    try:
+                        await request.app.state.agent_runtime.auth.access_token()
+                    except ChatGPTError as exc:
+                        return JSONResponse(status_code=503 if exc.retryable else 401,
+                                            content={"detail": exc.public_message(request_locale(request)), "code": exc.code})
         response = await call_next(request)
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["Referrer-Policy"] = "no-referrer"

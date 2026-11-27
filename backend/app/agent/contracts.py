@@ -173,6 +173,11 @@ class ReadMaterialDraft(ToolInput):
     end: int | None = Field(default=None, ge=1, description="Optional 1-based end line (for text/code) or end page (for PDF).")
 
 
+class WebSearchDraft(ToolInput):
+    query: str = Field(min_length=1, max_length=300, description="Search query for up-to-date web information.")
+    max_results: int = Field(default=5, ge=1, le=8)
+
+
 TOOL_MODELS = {
     "propose_ingest": ProposalDraft,
     "propose_expand": ProposalDraft,
@@ -183,14 +188,21 @@ TOOL_MODELS = {
     "list_materials": ListMaterialsDraft,
     "search_materials": SearchMaterialsDraft,
     "read_material": ReadMaterialDraft,
+    "web_search": WebSearchDraft,
 }
 
 
 MATERIAL_TOOLS = frozenset({"list_materials", "search_materials", "read_material"})
+WEB_SEARCH_TOOLS = frozenset({"web_search"})
 CLOSURE_QUIZ_TOOLS = frozenset({"read_graph", "read_topic", "create_closure_quiz"})
 
 
-def tool_specs(only: frozenset[str] | None = None, *, include_materials: bool = False) -> list[dict[str, Any]]:
+def tool_specs(
+    only: frozenset[str] | None = None,
+    *,
+    include_materials: bool = False,
+    include_web_search_tool: bool = False,
+) -> list[dict[str, Any]]:
     """Clew tools as Responses API function tools."""
     descriptions = {
         "propose_ingest": "Submit graph operations that preserve the supplied source material. Clew validates and presents them for user review; this does not apply changes. Omitted descriptive metadata is preserved on existing topics. Read the current graph version first.",
@@ -202,10 +214,13 @@ def tool_specs(only: frozenset[str] | None = None, *, include_materials: bool = 
         "list_materials": "List files inside the graph's bound read-only local material folders (code repos, Markdown/TXT docs, PDFs).",
         "search_materials": "Search for a keyword, symbol, or phrase across the graph's bound local code, docs, and PDFs.",
         "read_material": "Read a line range from a bound code/text file or a page range from a bound PDF file.",
+        "web_search": "Search the web using the learner's configured search API key for current documentation, facts, or references.",
     }
-    allowed = set(only) if only is not None else (set(TOOL_MODELS) - MATERIAL_TOOLS) | {"read_graph", "read_topic"}
+    allowed = set(only) if only is not None else (set(TOOL_MODELS) - MATERIAL_TOOLS - WEB_SEARCH_TOOLS) | {"read_graph", "read_topic"}
     if include_materials:
         allowed |= MATERIAL_TOOLS
+    if include_web_search_tool:
+        allowed |= WEB_SEARCH_TOOLS
     functions = [
         {"type": "function", "name": name, "description": descriptions[name], "parameters": model.model_json_schema(), "strict": False}
         for name, model in TOOL_MODELS.items()

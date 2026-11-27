@@ -2,6 +2,7 @@ import React from "react";
 
 import { X } from "@phosphor-icons/react";
 import { ChatGPTAccountPanel } from "./ChatGPTAccountPanel";
+import { CustomProvidersPanel } from "./CustomProvidersPanel";
 import { LanguageSelect } from "./LanguageSelect";
 import { SectionHead } from "./SettingsSection";
 import { SwitchRow } from "./ui/SwitchRow";
@@ -127,6 +128,7 @@ export function SettingsModal(props: SettingsModalProps): React.JSX.Element | nu
           <div className="stGrid">
             <div className="stColumn">
               <ChatGPTAccountPanel copy={copy} chatgpt={chatgpt} drafts={drafts} setDrafts={setDrafts} />
+              <CustomProvidersPanel copy={copy} chatgpt={chatgpt} />
 
               <section className="stSection">
                 <SectionHead eyebrow={copy.settingsPanel.preferences} title={copy.settingsPanel.assistantAndWorkspace} />

@@ -1,0 +1,314 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Ideation: Clew 自定义 API Key 与多模型接入方案</title>
+<style>
+  :root {
+    --bg: #faf9f6;
+    --surface: #ffffff;
+    --surface-2: #f4f1ea;
+    --fg: #24221f;
+    --fg-2: #5c574f;
+    --line: #e6e1d6;
+    --accent: #c86442;
+    --accent-soft: #faeae4;
+    --good: #2d7a4f;
+    --good-soft: #e6f4ec;
+    --warn: #9a6700;
+    --warn-soft: #fdf4dc;
+    --code-bg: #f1eee7;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Segoe UI", sans-serif;
+    background: var(--bg);
+    color: var(--fg);
+    line-height: 1.65;
+  }
+  .wrap { max-width: 960px; margin: 0 auto; padding: 36px 24px 72px; }
+  header { border-bottom: 1px solid var(--line); padding-bottom: 20px; margin-bottom: 28px; }
+  .eyebrow { font-size: 12px; font-weight: 700; color: var(--accent); letter-spacing: 0.06em; text-transform: uppercase; }
+  h1 { margin: 8px 0 10px; font-size: 28px; line-height: 1.3; }
+  h2 { margin: 32px 0 14px; font-size: 20px; border-bottom: 1px solid var(--line); padding-bottom: 8px; }
+  .meta { font-size: 13px; color: var(--fg-2); display: flex; flex-wrap: wrap; gap: 14px; }
+  .panel { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 18px 20px; margin-bottom: 18px; }
+  .axes { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 12px; margin-top: 10px; }
+  .axis { background: var(--surface-2); border-radius: 10px; padding: 12px 14px; font-size: 13px; }
+  .axis strong { display: block; color: var(--fg); margin-bottom: 4px; font-size: 14px; }
+  .jump { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0 22px; }
+  .jump a {
+    text-decoration: none;
+    font-size: 13px;
+    color: var(--fg);
+    background: var(--surface);
+    border: 1px solid var(--line);
+    padding: 5px 11px;
+    border-radius: 999px;
+  }
+  .jump a:hover { border-color: var(--accent); color: var(--accent); }
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    padding: 20px 22px;
+    margin-bottom: 16px;
+  }
+  .card.top { border-color: var(--accent); box-shadow: 0 2px 12px rgba(200, 100, 66, 0.08); }
+  .head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 10px; flex-wrap: wrap; }
+  .title-row { display: flex; align-items: center; gap: 10px; }
+  .rank {
+    display: inline-grid;
+    place-items: center;
+    width: 26px;
+    height: 26px;
+    border-radius: 999px;
+    background: var(--accent-soft);
+    color: var(--accent);
+    font-size: 13px;
+    font-weight: 700;
+    flex-shrink: 0;
+  }
+  .title { font-size: 17px; font-weight: 700; }
+  .badges { display: flex; flex-wrap: wrap; gap: 6px; }
+  .badge { font-size: 12px; font-weight: 600; padding: 2px 10px; border-radius: 999px; background: var(--surface-2); color: var(--fg-2); }
+  .badge.good { background: var(--good-soft); color: var(--good); }
+  .badge.accent { background: var(--accent-soft); color: var(--accent); }
+  .badge.warn { background: var(--warn-soft); color: var(--warn); }
+  p { margin: 0 0 10px; font-size: 14px; color: var(--fg-2); }
+  .grid { display: grid; grid-template-columns: 1fr; gap: 8px; margin-top: 10px; }
+  .field { background: var(--surface-2); padding: 10px 13px; border-radius: 9px; font-size: 13px; color: var(--fg); }
+  .field b { color: var(--fg); }
+  code { background: var(--code-bg); padding: 1px 5px; border-radius: 4px; font-size: 12.5px; }
+  .diagram { margin: 14px 0 8px; background: #fcfbf9; border: 1px solid var(--line); border-radius: 10px; padding: 12px; overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; font-size: 13.5px; }
+  th, td { text-align: left; padding: 10px 14px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { background: var(--surface-2); font-weight: 600; color: var(--fg); }
+  tr:last-child td { border-bottom: none; }
+  footer { margin-top: 36px; font-size: 12.5px; color: var(--fg-2); border-top: 1px solid var(--line); padding-top: 14px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="eyebrow">Clew Ideation · 多模型与自定义 API Key</div>
+    <h1>让 Clew 支持自定义 API Key（Anthropic / OpenAI 兼容 / 本地模型）</h1>
+    <div class="meta">
+      <span>日期：2026-11-27</span>
+      <span>主题：custom-api-keys-and-providers</span>
+      <span>焦点：接入 Anthropic 或其他 AI 的自定义 Key</span>
+      <span>范围：12 个候选 → 筛出 6 个核心方案（跨 4 个维度）</span>
+    </div>
+  </header>
+
+  <section class="panel">
+    <h2 style="margin-top:0;">现状与依据（Codebase Context）</h2>
+    <p><strong>1. 登录强绑定 ChatGPT OAuth：</strong><code>frontend/src/App.tsx:30,47</code> 用 <code>chatgpt.account?.authenticated &amp;&amp; chatgpt.account.sharing</code> 门控整个工作区，没有 ChatGPT Plus/Pro 账号就无法进入 Clew。</p>
+    <p><strong>2. 运行时深度绑定 OpenAI Responses API：</strong><code>backend/app/agent/chatgpt_api.py:54</code> 直接 POST <code>/v1/responses</code>；<code>runtime.py:256-263</code> 硬编码注入 OpenAI 专属字段 <code>{"type": "web_search"}</code>、<code>include: ["reasoning.encrypted_content"]</code> 和 <code>reasoning.effort</code>。</p>
+    <p><strong>3. 会话记录存的是 Responses 私有结构：</strong><code>backend/app/agent/store.py:85-95</code> 把原始 Responses API 的 <code>items_json</code> 落库到 <code>agent_transcripts</code>；但好消息是 <code>runtime.py:233-241</code> 已经自带“当 transcript 为空时，从通用 <code>chat_messages</code> 重建历史上下文”的逻辑。</p>
+    <p><strong>4. 系统钥匙串基础设施已现成：</strong><code>backend/app/agent/chatgpt_auth.py:98-120</code> 已经封装了基于 Python <code>keyring</code> 的 <code>KeyringCredentialStore</code>（无明文落盘兜底），可直接复用保存用户自定义 API Key。</p>
+    <p><strong>5. 外部生态现状（2025–2026）：</strong>Anthropic、Gemini、DeepSeek、OpenRouter、Ollama 均已提供 OpenAI 兼容的 <code>/v1/chat/completions</code>（含 tool calling）；但 Anthropic 原生 <code>/v1/messages</code> 在 Prompt Caching（大幅省钱）与复杂 JSON Schema 工具调用稳定性上明显更强。</p>
+  </section>
+
+  <section>
+    <h2>思考维度（Topic Axes）</h2>
+    <div class="axes">
+      <div class="axis"><strong>1. 接入架构与协议层</strong>如何在不破坏现有 ChatGPT OAuth 的前提下，用最小抽象同时覆盖 Anthropic 与主流 OpenAI 兼容服务。</div>
+      <div class="axis"><strong>2. 密钥安全与入口解耦</strong>如何安全保管 Key、去掉强制 ChatGPT 登录门槛，并让配置体验像填写一张“连接卡片”一样简单。</div>
+      <div class="axis"><strong>3. 跨模型会话与能力对齐</strong>切模型后旧对话不报错，不同厂商缺失联网搜索/思考强度时如何显式告知而非静默失败。</div>
+      <div class="axis"><strong>4. 学习场景下的多模型协同</strong>聊天讲解、提炼总结、结课测验各自适合什么模型，怎么让 BYOK 既好用又省钱。</div>
+    </div>
+  </section>
+
+  <section>
+    <h2>精选方案（Ranked Ideas）</h2>
+    <div class="jump">
+      <a href="#idea-1">1. 双适配器最小协议层</a>
+      <a href="#idea-2">2. 复用系统 Keychain 的多档连接器</a>
+      <a href="#idea-3">3. 解耦登录门禁：零 OAuth 直接进工作区</a>
+      <a href="#idea-4">4. 跨模型切换自动重水合历史（不崩旧对话）</a>
+      <a href="#idea-5">5. 显式能力徽章 + Fail-Closed 降级</a>
+      <a href="#idea-6">6. 按任务类型分工模型 + 一键连通性自检</a>
+    </div>
+
+    <article class="card top" id="idea-1">
+      <div class="head">
+        <div class="title-row"><span class="rank">1</span><span class="title">在后端抽一层极简「双适配器」：Anthropic 原生 + OpenAI-Compatible 通用层</span></div>
+        <div class="badges">
+          <span class="badge accent">架构核心</span>
+          <span class="badge good">置信度 92%</span>
+          <span class="badge">复杂度：中</span>
+        </div>
+      </div>
+      <p>在 <code>backend/app/agent/</code> 下定义一个极薄的统一接口（<code>list_models</code> + <code>stream_turn</code>，输出统一的文本流与工具调用事件），保留现有 <code>ChatGPTClient</code>（Responses API）不动，只新增两个无外部代理依赖的内置适配器：<strong>① Anthropic Native Adapter（<code>/v1/messages</code>）</strong>——原生支持 Claude 工具调用、Extended Thinking 与 Prompt Caching；<strong>② OpenAI-Compatible Adapter（<code>/v1/chat/completions</code>）</strong>——一套代码同时打通 OpenAI API、OpenRouter、Gemini（兼容端点）、DeepSeek、Ollama / LM Studio 以及任意中转 Base URL。</p>
+      <div class="diagram">
+        <svg viewBox="0 0 760 150" width="100%" height="150" role="img" aria-label="Unified LLM Provider Adapter">
+          <rect x="16" y="48" width="150" height="54" rx="10" fill="#faeae4" stroke="#c86442" stroke-width="1.5"/>
+          <text x="91" y="71" text-anchor="middle" font-size="13" font-weight="700" fill="#24221f">AgentRuntime</text>
+          <text x="91" y="89" text-anchor="middle" font-size="11" fill="#5c574f">统一事件 / 工具循环</text>
+
+          <rect x="220" y="48" width="155" height="54" rx="10" fill="#f4f1ea" stroke="#b9b09f" stroke-width="1.5"/>
+          <text x="297" y="71" text-anchor="middle" font-size="13" font-weight="700" fill="#24221f">LLMProvider 接口</text>
+          <text x="297" y="89" text-anchor="middle" font-size="11" fill="#5c574f">stream() / list_models()</text>
+
+          <line x1="166" y1="75" x2="220" y2="75" stroke="#5c574f" stroke-width="1.5"/>
+          <line x1="375" y1="75" x2="438" y2="28" stroke="#5c574f" stroke-width="1.4"/>
+          <line x1="375" y1="75" x2="438" y2="75" stroke="#c86442" stroke-width="1.8"/>
+          <line x1="375" y1="75" x2="438" y2="122" stroke="#2d7a4f" stroke-width="1.8"/>
+
+          <rect x="438" y="8" width="302" height="38" rx="8" fill="#ffffff" stroke="#d5cfc2"/>
+          <text x="589" y="31" text-anchor="middle" font-size="12.5" fill="#24221f">1. ChatGPT OAuth（保留现有 /v1/responses）</text>
+
+          <rect x="438" y="56" width="302" height="38" rx="8" fill="#faeae4" stroke="#c86442"/>
+          <text x="589" y="79" text-anchor="middle" font-size="12.5" font-weight="600" fill="#24221f">2. Anthropic Native（/v1/messages + Caching）</text>
+
+          <rect x="438" y="104" width="302" height="38" rx="8" fill="#e6f4ec" stroke="#2d7a4f"/>
+          <text x="589" y="127" text-anchor="middle" font-size="12.5" font-weight="600" fill="#24221f">3. OpenAI-Compatible（OpenAI/OpenRouter/DeepSeek/Ollama）</text>
+        </svg>
+      </div>
+      <div class="grid">
+        <div class="field"><b>依据：</b><code>direct:</code> <code>backend/app/agent/chatgpt_api.py</code> 仅 141 行且直接用 <code>httpx</code>，无重型 SDK 耦合；<code>external:</code> 2025–2026 主流厂商均支持 OpenAI Chat Completions 兼容协议，但 Anthropic 原生 <code>/v1/messages</code> 独享 Prompt Caching（Clew 每轮都会带整张图谱的 <code>turn_context</code>，命中缓存可省 60–85% 输入 token 费用）。</div>
+        <div class="field"><b>为什么值得做：</b>零额外后台进程（不用装 LiteLLM Proxy/Redis），一个 PR 同时满足“想用 Claude 最好体验”和“想接任何中转站/本地模型”两类需求。</div>
+        <div class="field"><b>权衡/代价：</b>需要维护两套流式解析器（Anthropic SSE 和 Chat Completions SSE），并针对 Clew 的 <code>ProposalDraft</code> 等严格工具 Schema 补齐单测。</div>
+      </div>
+    </article>
+
+    <article class="card top" id="idea-2">
+      <div class="head">
+        <div class="title-row"><span class="rank">2</span><span class="title">复用系统 Keychain 的「多连接配置档（Provider Profiles）」</span></div>
+        <div class="badges">
+          <span class="badge accent">密钥安全与入口</span>
+          <span class="badge good">置信度 90%</span>
+          <span class="badge">复杂度：低–中</span>
+        </div>
+      </div>
+      <p>在「设置 → 模型与连接」里把原来的“单一 ChatGPT 账号卡片”升级为「连接列表」，允许用户同时保存多个配置档（例如：<code>Anthropic 官方</code>、<code>OpenRouter</code>、<code>本地 Ollama</code>、<code>ChatGPT 订阅</code>）。非敏感元数据（名称、厂商类型、Base URL、可选模型列表）存进工作区配置，而 <strong>API Key 一律存入现有的 <code>KeyringCredentialStore</code>（macOS 系统钥匙串）</strong>，SQLite 与前端状态永远只见掩码（如 <code>sk-ant-•••8f2a</code>），绝不明文落盘。</p>
+      <div class="grid">
+        <div class="field"><b>依据：</b><code>direct:</code> <code>backend/app/agent/chatgpt_auth.py:98-120</code> 已实现 <code>KeyringCredentialStore</code> 并明确注释 <em>"There is no plaintext fallback for tokens."</em>；复用这套机制能与 Clew 现有安全标准完全对齐。</div>
+        <div class="field"><b>为什么值得做：</b>一次配好多个 Key（比如日常用 Claude、离线用 Ollama、有额度时切 ChatGPT），顶部模型选择器直接按连接分组一键切换，不用每次删了重填。</div>
+        <div class="field"><b>权衡/代价：</b>在无 OS Keyring 的精简 Linux 容器环境下需要显式报错提示（或允许显式通过环境变量注入），不能静默降级为明文文件。</div>
+      </div>
+    </article>
+
+    <article class="card top" id="idea-3">
+      <div class="head">
+        <div class="title-row"><span class="rank">3</span><span class="title">解耦启动登录门禁：首屏支持「用自己的 API Key 开始」</span></div>
+        <div class="badges">
+          <span class="badge accent">密钥安全与入口</span>
+          <span class="badge good">置信度 94%</span>
+          <span class="badge">复杂度：低</span>
+        </div>
+      </div>
+      <p>把 <code>App.tsx:30</code> 的 <code>ready</code> 条件从“必须登录 ChatGPT Plus/Pro”改为“<strong>已连接任意一个可用 Provider（ChatGPT OAuth 或至少一个已验证的自定义 Key）</strong>”。在 <code>SignIn.tsx</code> 首屏并排提供两个清晰入口：「使用 ChatGPT 订阅登录」和「使用自定义 API Key（Anthropic / OpenAI / 兼容接口）」，选后者只需粘贴 Key（可选预设厂商自动填 Base URL），验证通过即刻进入图谱。</p>
+      <div class="grid">
+        <div class="field"><b>依据：</b><code>direct:</code> <code>frontend/src/App.tsx:30,47</code> 硬性判断 <code>!!chatgpt.account?.authenticated &amp;&amp; chatgpt.account.sharing</code>，导致只有 Claude/DeepSeek/OpenRouter Key 的用户完全被挡在门外。</div>
+        <div class="field"><b>为什么值得做：</b>彻底解除 Clew 对 ChatGPT Plus/Pro 订阅的强依赖，大幅降低自己和他人本地运行 Clew 的门槛。</div>
+        <div class="field"><b>权衡/代价：</b>需要把 <code>/api/v1/chatgpt/account</code> 的状态语义扩展或新增 <code>/api/v1/providers</code> 接口，避免前端 hook 仍把非 ChatGPT 状态硬塞进 <code>ChatGPTAccount</code> 类型。</div>
+      </div>
+    </article>
+
+    <article class="card" id="idea-4">
+      <div class="head">
+        <div class="title-row"><span class="rank">4</span><span class="title">跨厂商切换时「自动从通用消息表重水合」，彻底避免旧对话报错</span></div>
+        <div class="badges">
+          <span class="badge">跨模型会话兼容</span>
+          <span class="badge good">置信度 88%</span>
+          <span class="badge">复杂度：低–中</span>
+        </div>
+      </div>
+      <p>在 <code>agent_transcripts</code> 里额外记录一条 <code>provider_protocol</code> 标记（例如 <code>openai_responses</code> / <code>anthropic_messages</code> / <code>openai_chat</code>）。当用户在同一段学习对话里中途从 ChatGPT 切到 Claude（或反过来）时，后端检测到协议不一致，<strong>自动跳过旧协议的私有 transcript，走 <code>runtime.py:233-241</code> 现成的 <code>fresh=True</code> 路径</strong>，从标准 <code>chat_messages</code>（含已应用的提案/提炼/测验记录）干净地重建上下文继续聊。</p>
+      <div class="grid">
+        <div class="field"><b>依据：</b><code>direct:</code> <code>backend/app/agent/store.py:85</code> 存的是 Responses API 原始 <code>items_json</code>（含 <code>reasoning.encrypted_content</code>），跨厂商直接重放必挂；而 <code>runtime.py:233-241</code> 已经写好了基于 <code>previous_messages</code> 的历史重建机制（撤回功能刚验证过这套路径）。</div>
+        <div class="field"><b>为什么值得做：</b>用户在同一主题下可以自由“先用便宜模型聊概念，卡壳了切 Claude Opus 深挖”，完全无感且不会触发神秘的 API 400 错误。</div>
+        <div class="field"><b>权衡/代价：</b>切换当轮会丢失上一个厂商的隐藏思考链（encrypted reasoning），但保留所有可见问答与图谱操作回执，对学习体验几乎无损。</div>
+      </div>
+    </article>
+
+    <article class="card" id="idea-5">
+      <div class="head">
+        <div class="title-row"><span class="rank">5</span><span class="title">显式能力矩阵（联网 / 思考强度 / 严格工具）+ Fail-Closed 提示</span></div>
+        <div class="badges">
+          <span class="badge">跨模型会话兼容</span>
+          <span class="badge good">置信度 85%</span>
+          <span class="badge">复杂度：低</span>
+        </div>
+      </div>
+      <p>给每个适配器声明清晰的能力元数据：<code>supports_web_search</code>、<code>supports_reasoning_effort</code>、<code>supports_prompt_caching</code>、<code>supports_tool_calling</code>。在 <code>runtime.py:256-263</code> 构造请求时严格按能力矩阵裁剪（不再盲目往 Anthropic/Ollama 塞 <code>{"type": "web_search"}</code> 或 <code>reasoning.encrypted_content</code>）；同时在前端模型下拉项旁用极简小标签标出能力（如是否支持内置联网），若某个本地小模型不支持 tool calling，直接显式提示“该模型仅支持纯问答，无法修改图谱”，绝不假装成功。</p>
+      <div class="grid">
+        <div class="field"><b>依据：</b><code>direct:</code> <code>runtime.py:256-263</code> 目前无条件注入 <code>web_search</code> 与 <code>reasoning.encrypted_content</code>；<code>AGENTS.md</code> 要求 <em>"Prefer fail-closed over fake success. Keep model I/O inside visible contracts."</em></div>
+        <div class="field"><b>为什么值得做：</b>多模型接入最容易踩的坑就是“参数不兼容直接 400”或“模型不会调工具却胡说已修改图谱”，能力矩阵直接把坑封死在边界层。</div>
+        <div class="field"><b>权衡/代价：</b>自定义 OpenAI 兼容端点无法 100% 自动探测是否支持工具调用，需要给一个清晰默认值 + 允许在配置档里手动勾选关闭。</div>
+      </div>
+    </article>
+
+    <article class="card" id="idea-6">
+      <div class="head">
+        <div class="title-row"><span class="rank">6</span><span class="title">一键「测试连接并拉取模型」+ 按场景选模型（日常问答 vs 测验/提炼）</span></div>
+        <div class="badges">
+          <span class="badge">学习场景协同</span>
+          <span class="badge warn">置信度 78%</span>
+          <span class="badge">复杂度：中</span>
+        </div>
+      </div>
+      <p>配好自定义 Key 后提供一个「测试连接」按钮：后端发一次极轻量的 <code>GET /models</code>（或 1-token 探测）即时返回清晰错误原因（Key 无效 / Base URL 拼错 / 余额不足）并自动填充可用模型列表，同时支持手动输入任意模型 ID（适配新发布模型或中转站别名）。进阶可选：在设置里允许为「日常对话」和「结课测验 / 提炼总结」分别指定默认模型（例如日常用 Claude Sonnet，批量出题用便宜快速的 Haiku/Flash）。</p>
+      <div class="grid">
+        <div class="field"><b>依据：</b><code>reasoned:</code> BYOK 用户自付 token 费用，最怕两件事——填完 Key 发消息才报错不知道错哪、以及 12 道结课测验或长对话提炼不小心烧掉昂贵旗舰模型额度。</div>
+        <div class="field"><b>为什么值得做：</b>配置体验零挫败感，且把“多 Key”真正转化成学习工作流里的省钱与提速优势。</div>
+        <div class="field"><b>权衡/代价：</b>分场景模型路由属于锦上添花，建议在单模型 BYOK 跑通后作为第二步迭代，避免初期设置项过重。</div>
+      </div>
+    </article>
+  </section>
+
+  <section>
+    <h2>被淘汰的想法（Rejection Summary）</h2>
+    <table>
+      <thead>
+        <tr>
+          <th style="width:40px;">#</th>
+          <th style="width:260px;">候选想法</th>
+          <th>淘汰原因</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>1</td>
+          <td>引入独立 LiteLLM Proxy（Docker + Postgres/Redis）作为统一网关</td>
+          <td>对本地桌面/单机运行的 Clew 过重，违背“轻量开箱即用”定位，增加大量运维和排错成本。</td>
+        </tr>
+        <tr>
+          <td>2</td>
+          <td>只靠 Anthropic 的 OpenAI 兼容端点，不写原生 Anthropic 适配器</td>
+          <td>虽然代码少 80 行，但会丢掉 Prompt Caching（对每轮携带图谱上下文的 Clew 成本影响极大）以及原生 Extended Thinking / 稳定工具调用。</td>
+        </tr>
+        <tr>
+          <td>3</td>
+          <td>前端直连 Anthropic / OpenAI API（浏览器存 Key 在 localStorage）</td>
+          <td>存在严重安全隐患（XSS 泄露 Key）、CORS 限制，且绕开了 Clew 后端的工具执行、图谱校验与快照审计边界。</td>
+        </tr>
+        <tr>
+          <td>4</td>
+          <td>直接把 API Key 明文存在 SQLite 或 workspace JSON 里</td>
+          <td>违背 Clew 现有 <code>KeyringCredentialStore</code> 的无明文落盘安全基线，导出备份或排错时极易意外泄露密钥。</td>
+        </tr>
+        <tr>
+          <td>5</td>
+          <td>自动静默 Fallback（比如 Claude 限流时偷偷切到 GPT 或便宜模型）</td>
+          <td>明确违反 <code>AGENTS.md</code> 原则（<em>"Do not add hidden semantic routing or silent fallback behavior"</em>），也会让 BYOK 用户在不知情下产生意外账单。</td>
+        </tr>
+        <tr>
+          <td>6</td>
+          <td>引入全量 LangChain / LlamaIndex 框架重写 AgentRuntime</td>
+          <td>Clew 现有 <code>runtime.py</code> 仅 426 行且与 SQLite 事件流、暂停问答卡片、撤回机制深度契合，引入重框架反而破坏可控性与调试透明度。</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <footer>
+    Generated for Clew (<code>feat/conversation-distillation-and-revert</code>) · 2026-11-27 · Repo-grounded ideation
+  </footer>
+</div>
+</body>
+</html>

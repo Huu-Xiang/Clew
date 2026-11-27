@@ -602,6 +602,8 @@ async def rollback_graph(snapshot_id: int, repository: GraphRepository = Depends
 
 from app.api.chat_routes import router as chat_router
 from app.api.chatgpt_routes import router as chatgpt_router
+from app.api.provider_routes import router as provider_router
 
 router.include_router(chat_router)
 router.include_router(chatgpt_router)
+router.include_router(provider_router)

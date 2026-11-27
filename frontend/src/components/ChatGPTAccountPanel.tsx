@@ -17,7 +17,9 @@ export function ChatGPTAccountPanel({ chatgpt, drafts, setDrafts, copy }: {
   const defaultModel = models.find((item) => item.isDefault);
   const model = drafts.model ? models.find((item) => item.model === drafts.model) : defaultModel;
   const login = account?.login;
-  const ready = !!account?.authenticated && account.sharing;
+  const ready = Boolean(account?.ready ?? (account?.authenticated && account?.sharing));
+  const chatgptReady = Boolean(account?.authenticated && account?.sharing);
+  const supportsReasoning = model ? model.supportsReasoningEffort !== false : chatgptReady;
   return <section className="stSection">
     <SectionHead
       eyebrow={labels.section}
@@ -25,7 +27,7 @@ export function ChatGPTAccountPanel({ chatgpt, drafts, setDrafts, copy }: {
       action={<button className="uiButton uiButtonQuiet uiButtonSmall" type="button" disabled={loading} onClick={() => void chatgpt.refresh()}>{loading ? labels.checking : copy.settingsPanel.refresh}</button>}
     />
     {account?.authenticated ? <div className="stAccount">
-      <span className={`stAccountDot${ready ? " stAccountDotOn" : ""}`} aria-hidden="true" />
+      <span className={`stAccountDot${chatgptReady ? " stAccountDotOn" : ""}`} aria-hidden="true" />
       <div className="stAccountMain">
         <div className="stAccountName">{account.account?.email ?? account.account?.name ?? labels.connected}</div>
         <div className="uiHelp">{account.sharing ? labels.usingPlan : labels.sharingNotGranted}</div>
@@ -57,7 +59,7 @@ export function ChatGPTAccountPanel({ chatgpt, drafts, setDrafts, copy }: {
       </label>
       <label className="uiField">
         <span className="uiLabel">{labels.reasoning}</span>
-        <select className="uiSelect" value={drafts.reasoningEffort} disabled={!ready} onChange={(event) => setDrafts.reasoningEffort(event.target.value as ReasoningEffort | "")}>
+        <select className="uiSelect" value={drafts.reasoningEffort} disabled={!ready || !supportsReasoning} onChange={(event) => setDrafts.reasoningEffort(event.target.value as ReasoningEffort | "")}>
           <option value="">{labels.modelDefault}</option>
           {drafts.reasoningEffort && !Object.hasOwn(labels.effort, drafts.reasoningEffort) ? <option value={drafts.reasoningEffort}>{drafts.reasoningEffort} · {labels.unsupported}</option> : null}
           {EFFORTS.map((effort) => <option key={effort} value={effort}>{labels.effort[effort]}</option>)}

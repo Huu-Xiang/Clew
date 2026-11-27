@@ -27,7 +27,7 @@ export default function App({ initialLocale }: { initialLocale: AppLocale }): Re
 function AppContent(preference: LocalePreference): React.JSX.Element {
   const copy = getAppCopy(preference.locale);
   const chatgpt = useChatGPTAccount(preference.locale);
-  const ready = !!chatgpt.account?.authenticated && chatgpt.account.sharing;
+  const ready = Boolean(chatgpt.account?.ready ?? (chatgpt.account?.authenticated && chatgpt.account?.sharing));
   useEffect(() => {
     if (ready) return;
     document.querySelector('link[rel="icon"]')?.setAttribute("href", APP_FAVICON_DARK_SRC);
