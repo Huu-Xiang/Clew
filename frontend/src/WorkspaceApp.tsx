@@ -18,6 +18,7 @@ import {
 } from "./lib/appContracts";
 import { COMPACT_TOP_OVERLAY_THRESHOLD } from "./lib/appStatePersistence";
 import { readStoredCanvasStyle, writeStoredCanvasStyle, type CanvasStylePreferences } from "./lib/canvasStyle";
+import { computeTreeLayout, type TreeLayoutDirection } from "./lib/treeLayout";
 import { apiFetch, readErrorMessage } from "./lib/apiRequest";
 import { type ManualLayoutPositions, readManualLayoutPositions } from "./lib/appUiHelpers";
 import {
@@ -928,6 +929,32 @@ export default function WorkspaceApp({ chatgpt, ...preference }: { chatgpt: Chat
     setGraphLayoutEditing(true);
   }
 
+  async function arrangeTreeLayout(direction: TreeLayoutDirection): Promise<void> {
+    if (!activeGraph || activeGraph.topics.length === 0) return;
+    const positions = computeTreeLayout(activeGraph, direction);
+    setGraphLayoutSaving(true);
+    setError(null);
+    try {
+      const response = await apiFetch(`${API_BASE}/api/v1/workspace/graphs/${activeGraph.graph_id}/layout`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ positions }),
+      });
+      if (!response.ok) {
+        throw new Error(await readErrorMessage(response, copy.errors.saveGraphLayout));
+      }
+      const payload = (await response.json()) as WorkspaceEnvelope;
+      setData(payload);
+      setGraphLayoutEditing(false);
+      setGraphLayoutDraft(null);
+      void loadSnapshots();
+    } catch (layoutError) {
+      setError(copy.errors.request(copy.errors.saveGraphLayout, layoutError instanceof Error ? layoutError.message : ""));
+    } finally {
+      setGraphLayoutSaving(false);
+    }
+  }
+
   async function applyProposalFromMessage(messageId: string, proposal: ProposalGenerateResponse): Promise<void> {
     if (!activeGraph) return;
     setApplyLoadingMessageId(messageId);
@@ -1479,6 +1506,7 @@ export default function WorkspaceApp({ chatgpt, ...preference }: { chatgpt: Chat
           graphLayoutSaving,
           saveGraphLayout,
           startGraphLayoutEdit,
+          arrangeTreeLayout,
           setGraphLayoutEditing,
           setGraphLayoutDraft,
           graphShellRef,

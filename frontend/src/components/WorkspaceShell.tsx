@@ -21,6 +21,7 @@ import { readErrorMessage, type apiFetch } from "../lib/apiRequest";
 import { renderDisplayText, safeExternalUrl, type ManualLayoutPositions, type PopoverPosition } from "../lib/appUiHelpers";
 import type { AppCopy } from "../lib/appCopy";
 import type { CanvasStylePreferences } from "../lib/canvasStyle";
+import type { TreeLayoutDirection } from "../lib/treeLayout";
 import { formatMinutes, getTopicStateTone } from "../lib/graph";
 import { useModalAccessibility } from "../lib/useModalAccessibility";
 import { GraphCanvas } from "./GraphCanvas";
@@ -166,6 +167,7 @@ type GraphWorkspaceProps = {
   graphLayoutSaving: boolean;
   saveGraphLayout: () => Promise<void>;
   startGraphLayoutEdit: () => void;
+  arrangeTreeLayout?: (direction: TreeLayoutDirection) => Promise<void>;
   setGraphLayoutEditing: StateSetter<boolean>;
   setGraphLayoutDraft: StateSetter<ManualLayoutPositions | null>;
   graphShellRef: React.RefObject<HTMLDivElement | null>;
@@ -322,6 +324,7 @@ export function WorkspaceShell(props: WorkspaceShellProps): React.JSX.Element {
     graphLayoutSaving,
     saveGraphLayout,
     startGraphLayoutEdit,
+    arrangeTreeLayout,
     setGraphLayoutEditing,
     setGraphLayoutDraft,
     graphShellRef,
@@ -1129,6 +1132,7 @@ export function WorkspaceShell(props: WorkspaceShellProps): React.JSX.Element {
           setViewportCenteredZoom={setViewportCenteredZoom}
           saveGraphLayout={saveGraphLayout}
           startGraphLayoutEdit={startGraphLayoutEdit}
+          arrangeTreeLayout={arrangeTreeLayout}
           setGraphLayoutEditing={setGraphLayoutEditing}
           setGraphLayoutDraft={setGraphLayoutDraft}
           graphViewMode={graphViewMode}
@@ -1162,6 +1166,7 @@ export function WorkspaceShell(props: WorkspaceShellProps): React.JSX.Element {
           setViewportCenteredZoom={setViewportCenteredZoom}
           saveGraphLayout={saveGraphLayout}
           startGraphLayoutEdit={startGraphLayoutEdit}
+          arrangeTreeLayout={arrangeTreeLayout}
           setGraphLayoutEditing={setGraphLayoutEditing}
           setGraphLayoutDraft={setGraphLayoutDraft}
           graphViewMode={graphViewMode}
@@ -1195,6 +1200,7 @@ export function WorkspaceShell(props: WorkspaceShellProps): React.JSX.Element {
           setViewportCenteredZoom={setViewportCenteredZoom}
           saveGraphLayout={saveGraphLayout}
           startGraphLayoutEdit={startGraphLayoutEdit}
+          arrangeTreeLayout={arrangeTreeLayout}
           setGraphLayoutEditing={setGraphLayoutEditing}
           setGraphLayoutDraft={setGraphLayoutDraft}
           graphViewMode={graphViewMode}

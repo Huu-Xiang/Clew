@@ -2,6 +2,7 @@ import React from "react";
 import { Cube, Graph, LockSimple, LockSimpleOpen, Moon, PencilSimple, SunDim, X } from "@phosphor-icons/react";
 
 import type { AppCopy } from "../lib/appCopy";
+import type { TreeLayoutDirection } from "../lib/treeLayout";
 import type { GraphAssessment, WorkspaceEnvelope, GraphEnvelope } from "../lib/types";
 
 type GraphSummary = {
@@ -86,6 +87,7 @@ export function OverlayControls({
   graphLayoutEditing,
   saveGraphLayout,
   startGraphLayoutEdit,
+  arrangeTreeLayout,
   graphLayoutSaving,
   copy,
   setGraphLayoutEditing,
@@ -101,6 +103,7 @@ export function OverlayControls({
   graphLayoutEditing: boolean;
   saveGraphLayout: () => Promise<void>;
   startGraphLayoutEdit: () => void;
+  arrangeTreeLayout?: (direction: TreeLayoutDirection) => Promise<void>;
   graphLayoutSaving: boolean;
   copy: AppCopy;
   setGraphLayoutEditing: React.Dispatch<React.SetStateAction<boolean>>;
@@ -151,6 +154,30 @@ export function OverlayControls({
         >
           {viewportCenteredZoom ? <LockSimple size={15} weight="bold" /> : <LockSimpleOpen size={15} weight="bold" />}
         </button>
+      ) : null}
+      {activeGraph && graphViewMode === "2d" && !graphLayoutEditing && arrangeTreeLayout ? (
+        <>
+          <button
+            className="floatingStatusButton floatingStatusButtonText"
+            onClick={() => void arrangeTreeLayout("vertical")}
+            type="button"
+            disabled={graphLayoutSaving || activeGraph.topics.length === 0}
+            title={copy.graphStats.arrangeVerticalTreeTitle}
+            aria-label={copy.graphStats.arrangeVerticalTreeTitle}
+          >
+            {copy.graphStats.arrangeVerticalTree}
+          </button>
+          <button
+            className="floatingStatusButton floatingStatusButtonText"
+            onClick={() => void arrangeTreeLayout("horizontal")}
+            type="button"
+            disabled={graphLayoutSaving || activeGraph.topics.length === 0}
+            title={copy.graphStats.arrangeHorizontalTreeTitle}
+            aria-label={copy.graphStats.arrangeHorizontalTreeTitle}
+          >
+            {copy.graphStats.arrangeHorizontalTree}
+          </button>
+        </>
       ) : null}
       {activeGraph && graphViewMode === "2d" ? (
         <button

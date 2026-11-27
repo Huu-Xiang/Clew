@@ -1,6 +1,7 @@
 import React from "react";
 
 import type { AppCopy } from "../lib/appCopy";
+import type { TreeLayoutDirection } from "../lib/treeLayout";
 import type { GraphAssessment, GraphEnvelope, WorkspaceEnvelope } from "../lib/types";
 import { GraphStatItems, OverlayControls, type GraphViewMode } from "./WorkspaceShellOverlayControls";
 
@@ -34,6 +35,7 @@ export type TopStatsOverlayProps = {
   setViewportCenteredZoom: React.Dispatch<React.SetStateAction<boolean>>;
   saveGraphLayout: () => Promise<void>;
   startGraphLayoutEdit: () => void;
+  arrangeTreeLayout?: (direction: TreeLayoutDirection) => Promise<void>;
   setGraphLayoutEditing: React.Dispatch<React.SetStateAction<boolean>>;
   setGraphLayoutDraft: React.Dispatch<
     React.SetStateAction<Record<string, { x: number; y: number }> | null>
@@ -71,6 +73,7 @@ export function TopStatsOverlay({
   setViewportCenteredZoom,
   saveGraphLayout,
   startGraphLayoutEdit,
+  arrangeTreeLayout,
   setGraphLayoutEditing,
   setGraphLayoutDraft,
   graphViewMode,
@@ -114,6 +117,7 @@ export function TopStatsOverlay({
           graphLayoutEditing={graphLayoutEditing}
           saveGraphLayout={saveGraphLayout}
           startGraphLayoutEdit={startGraphLayoutEdit}
+          arrangeTreeLayout={arrangeTreeLayout}
           graphLayoutSaving={graphLayoutSaving}
           copy={copy}
           setGraphLayoutEditing={setGraphLayoutEditing}
