@@ -832,7 +832,7 @@
 
 .chatSelectionQuoteBtn {
   position: fixed;
-  z-index: 60;
+  z-index: 9999;
   transform: translateX(-50%);
   display: inline-flex;
   align-items: center;
@@ -841,8 +841,8 @@
   padding: 0 11px;
   border: 1px solid var(--ui-line-strong);
   border-radius: var(--ui-radius-pill);
-  background: var(--ui-surface, var(--ui-fill-2));
-  color: var(--ui-fg);
+  background: var(--ui-bg, #ffffff);
+  color: var(--ui-fg, #24221f);
   font: 600 var(--ui-text-xs)/1 var(--sans);
   box-shadow: 0 6px 18px rgba(0, 0, 0, 0.16);
   cursor: pointer;

@@ -1,4 +1,5 @@
 import React from "react";
+import { createPortal } from "react-dom";
 import { ArrowCounterClockwise, Check, Quotes } from "@phosphor-icons/react";
 
 import type { GraphChatState } from "../../lib/appContracts";
@@ -71,9 +72,14 @@ export function AssistantThread({
         return;
       }
       const range = selection.getRangeAt(0);
-      const container = range.commonAncestorContainer;
-      const anchorEl = container.nodeType === Node.ELEMENT_NODE ? (container as Element) : container.parentElement;
-      if (!anchorEl || !viewport.contains(anchorEl) || !anchorEl.closest(".chatMessage-assistant")) {
+      const toElement = (node: Node): Element | null => (node.nodeType === Node.ELEMENT_NODE ? (node as Element) : node.parentElement);
+      const startEl = toElement(range.startContainer);
+      const endEl = toElement(range.endContainer);
+      if (!startEl || !endEl || !viewport.contains(startEl) || !viewport.contains(endEl)) {
+        setSelectionQuote(null);
+        return;
+      }
+      if (!startEl.closest(".chatMessage-assistant") || !endEl.closest(".chatMessage-assistant")) {
         setSelectionQuote(null);
         return;
       }
@@ -88,9 +94,13 @@ export function AssistantThread({
     };
     const clearSelectionQuote = () => setSelectionQuote(null);
     document.addEventListener("selectionchange", syncSelection);
+    viewport.addEventListener("mouseup", syncSelection);
+    viewport.addEventListener("keyup", syncSelection);
     viewport.addEventListener("scroll", clearSelectionQuote, { passive: true });
     return () => {
       document.removeEventListener("selectionchange", syncSelection);
+      viewport.removeEventListener("mouseup", syncSelection);
+      viewport.removeEventListener("keyup", syncSelection);
       viewport.removeEventListener("scroll", clearSelectionQuote);
     };
   }, [chatViewportRef]);
@@ -100,26 +110,30 @@ export function AssistantThread({
     const viewport = chatViewportRef.current;
     if (viewport) viewport.scrollTop = viewport.scrollHeight;
   }, [chatViewportRef]);
+  const selectionPortal = selectionQuote && typeof document !== "undefined"
+    ? createPortal(
+      <button
+        className="chatSelectionQuoteBtn"
+        style={{ top: `${selectionQuote.top}px`, left: `${selectionQuote.left}px` }}
+        onMouseDown={(event) => event.preventDefault()}
+        onClick={() => {
+          const picked = selectionQuote.text;
+          updateCurrentChatState((current) => ({ ...current, quotedText: picked }));
+          window.getSelection()?.removeAllRanges();
+          setSelectionQuote(null);
+          window.requestAnimationFrame(() => chatComposerRef.current?.focus());
+        }}
+        type="button"
+      >
+        <Quotes size={13} weight="bold" aria-hidden="true" />
+        <span>{copy.sessions.quoteSelection}</span>
+      </button>,
+      document.body,
+    )
+    : null;
   return (
     <div ref={chatViewportRef} className="assistantThread">
-      {selectionQuote ? (
-        <button
-          className="chatSelectionQuoteBtn"
-          style={{ top: `${selectionQuote.top}px`, left: `${selectionQuote.left}px` }}
-          onMouseDown={(event) => event.preventDefault()}
-          onClick={() => {
-            const picked = selectionQuote.text;
-            updateCurrentChatState((current) => ({ ...current, quotedText: picked }));
-            window.getSelection()?.removeAllRanges();
-            setSelectionQuote(null);
-            window.requestAnimationFrame(() => chatComposerRef.current?.focus());
-          }}
-          type="button"
-        >
-          <Quotes size={13} weight="bold" aria-hidden="true" />
-          <span>{copy.sessions.quoteSelection}</span>
-        </button>
-      ) : null}
+      {selectionPortal}
       {chatThreadLoading ? (
         <div className="assistantHello assistantHelloLoading">
           <ClewLoader size={56} label={copy.sessions.loadingThread} />
