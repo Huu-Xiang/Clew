@@ -129,6 +129,11 @@ export default function WorkspaceApp({ chatgpt, ...preference }: { chatgpt: Chat
   const [graphLayoutEditing, setGraphLayoutEditing] = useState(false);
   const [graphLayoutDraft, setGraphLayoutDraft] = useState<ManualLayoutPositions | null>(null);
   const [graphLayoutSaving, setGraphLayoutSaving] = useState(false);
+  const [optimisticLayout, setOptimisticLayout] = useState<{
+    graphId: string;
+    positions: ManualLayoutPositions;
+  } | null>(null);
+  const layoutRequestSeqRef = useRef(0);
   const [renamingGraphId, setRenamingGraphId] = useState<string | null>(null);
   const [renameGraphDraft, setRenameGraphDraft] = useState("");
   const [renameGraphSaving, setRenameGraphSaving] = useState(false);
@@ -383,7 +388,30 @@ export default function WorkspaceApp({ chatgpt, ...preference }: { chatgpt: Chat
     () => availableGraphs.find((graph) => graph.graph_id === activeGraphId) ?? availableGraphs[0] ?? null,
     [activeGraphId, availableGraphs],
   );
-  const activeGraphManualLayout = useMemo(() => readManualLayoutPositions(activeGraph), [activeGraph]);
+  const activeGraphTopologyKey = useMemo(() => {
+    if (!activeGraph) return "";
+    const topics = activeGraph.topics.map((t) => `${t.id}:${(t.zones ?? []).join(",")}`).join("|");
+    const edges = activeGraph.edges.map((e) => `${e.source_topic_id}>${e.target_topic_id}:${e.relation}`).join("|");
+    return `${activeGraph.graph_id}#${topics}#${edges}`;
+  }, [activeGraph]);
+  const precomputedTreeLayouts = useMemo<{
+    vertical: ManualLayoutPositions;
+    horizontal: ManualLayoutPositions;
+  } | null>(() => {
+    if (!activeGraph || activeGraph.topics.length === 0) return null;
+    return {
+      vertical: computeTreeLayout(activeGraph, "vertical"),
+      horizontal: computeTreeLayout(activeGraph, "horizontal"),
+    };
+    // Recompute only when graph topology changes, not on layout position saves.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeGraphTopologyKey]);
+  const activeGraphManualLayout = useMemo(() => {
+    if (optimisticLayout && activeGraph && optimisticLayout.graphId === activeGraph.graph_id) {
+      return optimisticLayout.positions;
+    }
+    return readManualLayoutPositions(activeGraph);
+  }, [activeGraph, optimisticLayout]);
   const {
     selectedTopicId,
     setSelectedTopicId,
@@ -931,11 +959,18 @@ export default function WorkspaceApp({ chatgpt, ...preference }: { chatgpt: Chat
 
   async function arrangeTreeLayout(direction: TreeLayoutDirection): Promise<void> {
     if (!activeGraph || activeGraph.topics.length === 0) return;
-    const positions = computeTreeLayout(activeGraph, direction);
-    setGraphLayoutSaving(true);
+    const graphId = activeGraph.graph_id;
+    const positions = precomputedTreeLayouts?.[direction] ?? computeTreeLayout(activeGraph, direction);
+    const reqSeq = ++layoutRequestSeqRef.current;
+
+    // Instant optimistic canvas switch using the precomputed layout; persist asynchronously in the background.
     setError(null);
+    setGraphLayoutEditing(false);
+    setGraphLayoutDraft(null);
+    setOptimisticLayout({ graphId, positions });
+
     try {
-      const response = await apiFetch(`${API_BASE}/api/v1/workspace/graphs/${activeGraph.graph_id}/layout`, {
+      const response = await apiFetch(`${API_BASE}/api/v1/workspace/graphs/${graphId}/layout`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ positions }),
@@ -944,14 +979,14 @@ export default function WorkspaceApp({ chatgpt, ...preference }: { chatgpt: Chat
         throw new Error(await readErrorMessage(response, copy.errors.saveGraphLayout));
       }
       const payload = (await response.json()) as WorkspaceEnvelope;
+      if (reqSeq !== layoutRequestSeqRef.current) return;
       setData(payload);
-      setGraphLayoutEditing(false);
-      setGraphLayoutDraft(null);
+      setOptimisticLayout(null);
       void loadSnapshots();
     } catch (layoutError) {
+      if (reqSeq !== layoutRequestSeqRef.current) return;
+      setOptimisticLayout(null);
       setError(copy.errors.request(copy.errors.saveGraphLayout, layoutError instanceof Error ? layoutError.message : ""));
-    } finally {
-      setGraphLayoutSaving(false);
     }
   }
 
