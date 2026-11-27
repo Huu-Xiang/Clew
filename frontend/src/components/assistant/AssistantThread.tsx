@@ -149,25 +149,23 @@ export function AssistantThread({
         const view = presentChatReply(reply, reply.id === activeReplyId, currentChatState.status === "waiting", copy.sessions);
         if (!view.texts.length && !view.cards.length && !view.commentary && !view.progress && !view.interrupted) return null;
         return <div key={reply.id} className={`chatMessage chatMessage-${reply.role}`}>
+          {reply.role === "user" && agentControls.revertMessage && reply.messages[0]?.id ? (
+            <button
+              className="chatRevertButton"
+              disabled={agentControls.revertLoadingMessageId === reply.messages[0].id}
+              onClick={() => void agentControls.revertMessage?.(reply.messages[0].id)}
+              aria-label={copy.sessions.revertMessage}
+              title={copy.sessions.revertMessageTitle}
+              type="button"
+            >
+              <ArrowCounterClockwise size={13} weight="bold" aria-hidden="true" />
+            </button>
+          ) : null}
           <div className="chatBubble">
             {view.commentary ? <div className="chatCopy"><AssistantMarkdown content={view.commentary} /></div> : null}
             {view.texts.map((message) => <div key={message.id} className="chatCopy">
               {message.role === "assistant" ? <AssistantMarkdown content={message.content} /> : renderDisplayText(message.content)}
             </div>)}
-            {reply.role === "user" && agentControls.revertMessage && reply.messages[0]?.id ? (
-              <div className="chatUserActions">
-                <button
-                  className="chatRevertButton"
-                  disabled={agentControls.revertLoadingMessageId === reply.messages[0].id}
-                  onClick={() => void agentControls.revertMessage?.(reply.messages[0].id)}
-                  title={copy.sessions.revertMessageTitle}
-                  type="button"
-                >
-                  <ArrowCounterClockwise size={12} weight="bold" aria-hidden="true" />
-                  <span>{copy.sessions.revertMessage}</span>
-                </button>
-              </div>
-            ) : null}
             {view.cards.map((message) => {
               const proposal = message.proposal;
               const proposalCounts = proposal ? summarizePreviewCounts(proposal, copy) : [];
