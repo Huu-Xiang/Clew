@@ -120,7 +120,9 @@ class QuizService:
         passed = score >= (pass_threshold if pass_threshold is not None else topic_pass_threshold(graph, session.topic_id))
         closure_awarded = passed and closure.can_award_completion
         awarded_state = "solid" if closure_awarded else ("needs_review" if not passed else None)
-        missed = [r.prompt for r in reviews if not r.was_correct]
+        missed_reviews = [r for r in reviews if not r.was_correct]
+        missed = [r.prompt for r in missed_reviews]
+        asked_prompts = [question.prompt for question in session.questions]
         previous_fails = max((a.fail_count for a in graph.quiz_attempts if a.topic_id == session.topic_id), default=0)
         attempt = QuizAttempt(
             id=f"attempt_{uuid4().hex[:12]}",
@@ -130,6 +132,8 @@ class QuizService:
             question_count=len(session.questions),
             closure_awarded=closure_awarded,
             missed_questions=missed,
+            missed_reviews=missed_reviews,
+            asked_prompts=asked_prompts,
             fail_count=previous_fails + (0 if passed else 1),
         )
         return attempt, closure, awarded_state, reviews

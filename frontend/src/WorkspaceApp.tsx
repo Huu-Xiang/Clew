@@ -1097,6 +1097,31 @@ export default function WorkspaceApp({ chatgpt, ...preference }: { chatgpt: Chat
     await sendChat(prompt);
   }
 
+  async function reviewQuizMistakes(missed: QuizQuestionReview[]): Promise<void> {
+    if (!activeGraph || !selectedTopic || missed.length === 0) return;
+    setQuizSession(null);
+    setQuizReviews(null);
+    setAssistantWidth((current) => Math.max(current, ASSISTANT_MIN_WIDTH));
+    const formatted = missed
+      .map((item, idx) => {
+        const lines = [
+          `${idx + 1}. ${item.prompt}`,
+          item.selected_choice ? `   - ${copy.quiz.yourAnswer(item.selected_choice)}` : null,
+          `   - ${copy.quiz.correctAnswer(item.correct_choice)}`,
+        ].filter(Boolean);
+        return lines.join("\n");
+      })
+      .join("\n\n");
+    const prompt = copy.quiz.reviewMistakesPrompt(selectedTopic.title, formatted);
+    const matchingSession = chatSessions.find((session) => session.topic_id === selectedTopic.id);
+    if (matchingSession && activeSessionId !== matchingSession.session_id) {
+      pendingDistillRef.current = { sessionId: matchingSession.session_id, prompt };
+      setActiveSessionId(matchingSession.session_id);
+      return;
+    }
+    await sendChat(prompt);
+  }
+
   useEffect(() => {
     const pending = pendingDistillRef.current;
     if (!pending) return;
@@ -1541,6 +1566,7 @@ export default function WorkspaceApp({ chatgpt, ...preference }: { chatgpt: Chat
           startQuiz,
           markTopicFinished,
           distillAfterQuiz,
+          reviewQuizMistakes,
           addTopicKeyFile,
           removeTopicKeyFile,
         }}
@@ -1720,6 +1746,9 @@ export default function WorkspaceApp({ chatgpt, ...preference }: { chatgpt: Chat
         setQuizAnswers={setQuizAnswers}
         quizLoading={quizLoading}
         submitQuiz={submitQuiz}
+        reviewQuizMistakes={reviewQuizMistakes}
+        skipTopicFromQuiz={markTopicFinished}
+        canSkipTopicFromQuiz={Boolean(selectedTopic && selectedTopic.state !== "solid" && selectedTopic.state !== "mastered")}
       />
     </div>
   );

@@ -203,6 +203,7 @@ type TopicDetailsProps = {
   startQuiz: () => Promise<void>;
   markTopicFinished: () => Promise<void>;
   distillAfterQuiz?: () => Promise<void>;
+  reviewQuizMistakes?: (missed: import("../lib/types").QuizQuestionReview[]) => Promise<void>;
   addTopicKeyFile?: (topicId: string, sourceId: string, path: string, note?: string) => Promise<void>;
   removeTopicKeyFile?: (topicId: string, keyFileId: string) => Promise<void>;
 };
@@ -1507,6 +1508,37 @@ export function WorkspaceShell(props: WorkspaceShellProps): React.JSX.Element {
                             ) : null}
                           </div>
                         ) : null}
+                        {selectedClosureStatus.latest_attempt?.missed_reviews?.length ? (
+                          <details className="topicPopoverMistakes">
+                            <summary className="topicPopoverMistakesSummary">
+                              {copy.closure.recentMistakes(selectedClosureStatus.latest_attempt.missed_reviews.length)}
+                            </summary>
+                            <ul className="topicPopoverMistakesList">
+                              {selectedClosureStatus.latest_attempt.missed_reviews.map((item) => (
+                                <li key={item.question_id} className="topicPopoverMistakeItem">
+                                  <div className="topicPopoverMistakePrompt">{renderDisplayText(item.prompt)}</div>
+                                  {item.selected_choice ? (
+                                    <div className="topicPopoverMistakeWrong">{renderDisplayText(copy.quiz.yourAnswer(item.selected_choice))}</div>
+                                  ) : null}
+                                  <div className="topicPopoverMistakeRight">{renderDisplayText(copy.quiz.correctAnswer(item.correct_choice))}</div>
+                                  {item.explanation ? (
+                                    <div className="topicPopoverMistakeExp">{renderDisplayText(item.explanation)}</div>
+                                  ) : null}
+                                </li>
+                              ))}
+                            </ul>
+                            {topicDetails.reviewQuizMistakes && agentControls.authenticated ? (
+                              <button
+                                className="topicPopoverDistillBtn"
+                                disabled={chatLoading}
+                                onClick={() => void topicDetails.reviewQuizMistakes?.(selectedClosureStatus.latest_attempt!.missed_reviews!)}
+                                type="button"
+                              >
+                                {copy.closure.reviewMistakesWithAi}
+                              </button>
+                            ) : null}
+                          </details>
+                        ) : null}
                         {!(selectedTopicClosed && !closureTestsEnabled) ? (
                           <button
                             className="topicPopoverPrimary"
@@ -1520,6 +1552,16 @@ export function WorkspaceShell(props: WorkspaceShellProps): React.JSX.Element {
                               : closureTestsEnabled && !selectedClosureStatus.can_award_completion
                                 ? copy.closure.closePrerequisitesFirst
                                 : (closureTestsEnabled ? copy.closure.startClosureQuiz : copy.closure.markAsFinished)}
+                          </button>
+                        ) : null}
+                        {closureTestsEnabled && !selectedTopicClosed ? (
+                          <button
+                            className="topicPopoverSkipBtn"
+                            disabled={quizLoading}
+                            onClick={() => void markTopicFinished()}
+                            type="button"
+                          >
+                            {quizLoading ? copy.closure.markingAsFinished : copy.closure.skipTopic}
                           </button>
                         ) : null}
                       </div>

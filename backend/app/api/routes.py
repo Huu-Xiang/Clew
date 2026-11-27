@@ -526,7 +526,7 @@ def mark_topic_finished(
 
     updated_graph = next(item for item in workspace.workspace.graphs if item.graph_id == graph_id)
     closure_status = quiz_service.build_closure_status(updated_graph, topic_id)
-    attempt = next(item for item in updated_graph.quiz_attempts if item.topic_id == topic_id)
+    attempt = next(item for item in reversed(updated_graph.quiz_attempts) if item.topic_id == topic_id)
     repository.append_event(
         "graph.topic.mark_finished",
         {

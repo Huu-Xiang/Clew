@@ -212,6 +212,9 @@ export const APP_COPY_ZH_CN = {
     startClosureQuiz: "开始主题测验",
     markAsFinished: "标记为已完成",
     markingAsFinished: "正在标记…",
+    skipTopic: "跳过 · 标记已掌握",
+    recentMistakes: (count) => `最近错题复盘（${count} 题）`,
+    reviewMistakesWithAi: "让 AI 帮我复盘错题",
   },
   sessions: {
     assistantTitle: "助手",
@@ -544,5 +547,7 @@ export const APP_COPY_ZH_CN = {
     incorrect: "✗ 错误",
     submitting: "正在提交…",
     submit: "提交测验",
+    reviewMistakesPrompt: (topicTitle, items) =>
+      `我刚做了「${topicTitle}」的主题测验，下面这几道题做错了。请逐题告诉我为什么我选的答案不对、背后的核心概念是什么，以及怎么纠正我的理解：\n\n${items}`,
   },
 } satisfies AppCopy;

@@ -617,22 +617,23 @@ class GraphRepository:
             stack.extend(parents_by_child.get(current_topic_id, []))
 
         topic_map = {item.id: item for item in graph.topics}
-        graph.quiz_attempts = [item for item in graph.quiz_attempts if item.topic_id not in visited]
+        existing_attempt_topics = {item.topic_id for item in graph.quiz_attempts}
         for current_topic_id in topic_ids_to_close:
             current_topic = topic_map.get(current_topic_id)
             if current_topic is None:
                 continue
             current_topic.state = "solid"
-            graph.quiz_attempts.append(
-                QuizAttempt(
-                    id=f"manual-{uuid.uuid4().hex[:12]}",
-                    topic_id=current_topic_id,
-                    passed=True,
-                    score=1.0,
-                    question_count=max(1, workspace.config.quiz_question_count),
-                    closure_awarded=True,
+            if current_topic_id not in existing_attempt_topics:
+                graph.quiz_attempts.append(
+                    QuizAttempt(
+                        id=f"manual-{uuid.uuid4().hex[:12]}",
+                        topic_id=current_topic_id,
+                        passed=True,
+                        score=1.0,
+                        question_count=max(1, workspace.config.quiz_question_count),
+                        closure_awarded=True,
+                    )
                 )
-            )
         graph.version += 1
         workspace.active_graph_id = graph.graph_id
 

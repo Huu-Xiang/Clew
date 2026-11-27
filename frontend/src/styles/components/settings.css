@@ -249,3 +249,47 @@
 .stProviderForm { display: flex; flex-direction: column; gap: 10px; padding: 12px; border: 1px solid var(--ui-border); border-radius: 12px; }
 .stProviderActions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .stWebSearchBlock { margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--ui-border); display: flex; flex-direction: column; gap: 10px; }
+
+.topicPopoverSkipBtn {
+  width: 100%;
+  margin-top: 8px;
+  padding: 8px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--ui-border);
+  background: transparent;
+  color: var(--ui-muted);
+  font-size: 12.5px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: color .15s, border-color .15s, background .15s;
+}
+.topicPopoverSkipBtn:hover:not(:disabled) {
+  color: var(--ui-text);
+  border-color: var(--ui-text);
+  background: var(--ui-surface-2, rgba(0, 0, 0, 0.03));
+}
+.topicPopoverSkipBtn:disabled { opacity: 0.5; cursor: not-allowed; }
+.topicPopoverMistakes {
+  margin: 10px 0;
+  padding: 8px 10px;
+  border: 1px solid var(--ui-border);
+  border-radius: 10px;
+  background: var(--ui-surface-2, rgba(0, 0, 0, 0.02));
+  font-size: 12px;
+}
+.topicPopoverMistakesSummary {
+  cursor: pointer;
+  font-weight: 600;
+  color: var(--ui-text);
+}
+.topicPopoverMistakesList {
+  margin: 8px 0 6px;
+  padding-left: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.topicPopoverMistakePrompt { font-weight: 500; color: var(--ui-text); }
+.topicPopoverMistakeWrong { color: var(--ui-bad); margin-top: 2px; }
+.topicPopoverMistakeRight { color: var(--ui-good); margin-top: 2px; }
+.topicPopoverMistakeExp { color: var(--ui-muted); margin-top: 2px; line-height: 1.45; }

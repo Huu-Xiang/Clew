@@ -84,6 +84,15 @@ LEGACY_COMPACT_MEMORY_PRESET: dict[str, int | bool] = {
 }
 
 
+class QuizQuestionReview(BaseModel):
+    question_id: str
+    prompt: str
+    selected_choice: str | None = None
+    correct_choice: str
+    was_correct: bool
+    explanation: str = ""
+
+
 class QuizAttempt(BaseModel):
     id: str
     topic_id: str
@@ -93,6 +102,8 @@ class QuizAttempt(BaseModel):
     closure_awarded: bool = False
     created_at: datetime = Field(default_factory=utc_now)
     missed_questions: list[str] = Field(default_factory=list)
+    missed_reviews: list[QuizQuestionReview] = Field(default_factory=list)
+    asked_prompts: list[str] = Field(default_factory=list)
     fail_count: int = 0
 
 
@@ -148,15 +159,6 @@ class TopicQuizSessionPublic(BaseModel):
     questions: list[QuizQuestionPublic] = Field(default_factory=list)
     closure_status: TopicClosureStatus
     generator: str = "heuristic"
-
-
-class QuizQuestionReview(BaseModel):
-    question_id: str
-    prompt: str
-    selected_choice: str | None = None
-    correct_choice: str
-    was_correct: bool
-    explanation: str = ""
 
 
 class QuizStartRequest(BaseModel):

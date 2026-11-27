@@ -62,6 +62,8 @@ export type QuizAttempt = {
   closure_awarded: boolean;
   created_at: string;
   missed_questions: string[];
+  missed_reviews?: QuizQuestionReview[];
+  asked_prompts?: string[];
   fail_count: number;
 };
 

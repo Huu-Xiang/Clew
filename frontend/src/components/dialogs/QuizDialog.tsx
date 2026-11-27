@@ -18,6 +18,9 @@ export function QuizDialog({
   setAnswers,
   loading,
   submitQuiz,
+  onReviewMistakes,
+  onSkipTopic,
+  canSkipTopic = false,
   copy,
 }: {
   session: TopicQuizSession | null;
@@ -31,11 +34,15 @@ export function QuizDialog({
   setAnswers: React.Dispatch<React.SetStateAction<Record<string, number>>>;
   loading: boolean;
   submitQuiz: () => Promise<void>;
+  onReviewMistakes?: (missed: QuizQuestionReview[]) => Promise<void>;
+  onSkipTopic?: () => Promise<void>;
+  canSkipTopic?: boolean;
   copy: AppCopy;
 }): React.JSX.Element | null {
   if (!session) return null;
 
   const answered = Object.keys(answers).length;
+  const missedReviews = reviews ? reviews.filter((item) => !item.was_correct) : [];
   return (
     <Modal
       id="quiz-dialog"
@@ -46,7 +53,26 @@ export function QuizDialog({
       closeLabel={copy.quiz.closeQuiz}
       onClose={closeModal}
       size="lg"
-      footer={reviews ? undefined : <>
+      footer={reviews ? (
+        <>
+          <span className="uiModalFooterStart uiHelp">
+            {reviews.filter((item) => item.was_correct).length} / {reviews.length}
+          </span>
+          {canSkipTopic && onSkipTopic ? (
+            <button className="uiButton uiButtonQuiet" disabled={loading} onClick={() => void onSkipTopic()} type="button">
+              {loading ? copy.closure.markingAsFinished : copy.closure.skipTopic}
+            </button>
+          ) : null}
+          {missedReviews.length > 0 && onReviewMistakes ? (
+            <button className="uiButton uiButtonPrimary" disabled={loading} onClick={() => void onReviewMistakes(missedReviews)} type="button">
+              {copy.closure.reviewMistakesWithAi}
+            </button>
+          ) : null}
+          <button className="uiButton" onClick={closeModal} type="button">
+            {copy.quiz.closeQuiz}
+          </button>
+        </>
+      ) : <>
         <span className="uiModalFooterStart uiHelp">{answered} / {session.questions.length} · {session.generator}</span>
         <button className="uiButton uiButtonPrimary" disabled={loading} onClick={() => void submitQuiz()} type="button">
           {loading ? copy.quiz.submitting : copy.quiz.submit}

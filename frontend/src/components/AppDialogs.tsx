@@ -113,6 +113,9 @@ type AppDialogsProps = {
   setQuizAnswers: StateSetter<Record<string, number>>;
   quizLoading: boolean;
   submitQuiz: () => Promise<void>;
+  reviewQuizMistakes?: (missed: QuizQuestionReview[]) => Promise<void>;
+  skipTopicFromQuiz?: () => Promise<void>;
+  canSkipTopicFromQuiz?: boolean;
 };
 
 export function AppDialogs(props: AppDialogsProps): React.JSX.Element {
@@ -205,6 +208,9 @@ export function AppDialogs(props: AppDialogsProps): React.JSX.Element {
     setQuizAnswers,
     quizLoading,
     submitQuiz,
+    reviewQuizMistakes,
+    skipTopicFromQuiz,
+    canSkipTopicFromQuiz,
   } = props;
 
   const obsidianIssues = obsidianImportPreview?.issues ?? [];
@@ -362,6 +368,9 @@ export function AppDialogs(props: AppDialogsProps): React.JSX.Element {
         setAnswers={setQuizAnswers}
         loading={quizLoading}
         submitQuiz={submitQuiz}
+        onReviewMistakes={reviewQuizMistakes}
+        onSkipTopic={skipTopicFromQuiz}
+        canSkipTopic={canSkipTopicFromQuiz}
         copy={copy}
       />
     </>

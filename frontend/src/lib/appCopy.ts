@@ -210,6 +210,9 @@ export const APP_COPY = {
     startClosureQuiz: "Start closure quiz",
     markAsFinished: "Mark as finished",
     markingAsFinished: "Marking...",
+    skipTopic: "Skip · mark as mastered",
+    recentMistakes: (count: number) => `Recent mistakes (${count})`,
+    reviewMistakesWithAi: "Review mistakes with AI",
   },
   sessions: {
     assistantTitle: "Assistant",
@@ -542,6 +545,8 @@ export const APP_COPY = {
     incorrect: "✗ Incorrect",
     submitting: "Submitting...",
     submit: "Submit quiz",
+    reviewMistakesPrompt: (topicTitle: string, items: string) =>
+      `I just took the quiz for "${topicTitle}" and missed these questions. Please explain why my chosen answers were wrong, clarify the core concepts, and tell me how to correct my understanding:\n\n${items}`,
   },
 };
 

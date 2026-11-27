@@ -249,6 +249,36 @@ class AgentRuntime:
             raise ValueError("Close prerequisite topics before taking this completion test.")
         selected = await self._select_model(model)
         quiz_prompt = f"Prepare a closure quiz for topic {topic_id}: exactly {question_count} questions. Call create_closure_quiz with the questions."
+        prior_prompts: list[str] = []
+        prior_missed: list[str] = []
+        seen_prompts: set[str] = set()
+        for prev in reversed(graph.quiz_attempts):
+            if prev.topic_id != topic_id:
+                continue
+            for prompt_text in (prev.asked_prompts or prev.missed_questions):
+                norm = prompt_text.strip()
+                if norm and norm.casefold() not in seen_prompts:
+                    seen_prompts.add(norm.casefold())
+                    prior_prompts.append(norm)
+            for missed_text in prev.missed_questions:
+                norm = missed_text.strip()
+                if norm and norm not in prior_missed:
+                    prior_missed.append(norm)
+            if len(prior_prompts) >= 30:
+                break
+        if prior_prompts:
+            prior_block = "\n".join(f"- {p}" for p in prior_prompts[:30])
+            quiz_prompt += (
+                "\n\nIMPORTANT: This learner is retaking the quiz. Do NOT repeat or trivially rephrase any of these previously asked questions:\n"
+                + prior_block
+                + "\nWrite completely fresh questions using new scenarios, edge cases, and angles."
+            )
+        if prior_missed:
+            missed_block = "\n".join(f"- {m}" for m in prior_missed[:10])
+            quiz_prompt += (
+                "\nOptionally re-test the underlying concepts behind these previously missed items using brand-new scenarios (never copy the old wording):\n"
+                + missed_block
+            )
         if graph.material_sources:
             quiz_prompt += " This graph has bound local materials; inspect the topic's key_files or search/read relevant files first so questions test concrete implementation details and real material concepts."
         run = AgentRun(id=uuid4().hex, graph_id=graph_id, session_id=None, model=selected,
