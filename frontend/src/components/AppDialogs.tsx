@@ -17,6 +17,7 @@ import type {
   GraphExportPackagePayload,
   ObsidianExportOptions,
   QuizQuestionReview,
+  StudyBookExportOptions,
   Topic,
   TopicQuizSession,
   WorkspaceEnvelope,
@@ -99,6 +100,9 @@ type AppDialogsProps = {
   setExportGraphFormatDraft: StateSetter<GraphExportFormat>;
   exportGraphObsidianOptionsDraft: ObsidianExportOptions;
   setExportGraphObsidianOptionsDraft: StateSetter<ObsidianExportOptions>;
+  exportGraphStudyBookOptionsDraft: StudyBookExportOptions;
+  setExportGraphStudyBookOptionsDraft: StateSetter<StudyBookExportOptions>;
+  exportGraphAiAuthenticated: boolean;
   exportGraphError: string | null;
   exportGraphLoading: boolean;
   exportGraph: (graph: GraphEnvelope) => Promise<void>;
@@ -113,6 +117,9 @@ type AppDialogsProps = {
   setQuizAnswers: StateSetter<Record<string, number>>;
   quizLoading: boolean;
   submitQuiz: () => Promise<void>;
+  reviewQuizMistakes?: (missed: QuizQuestionReview[]) => Promise<void>;
+  skipTopicFromQuiz?: () => Promise<void>;
+  canSkipTopicFromQuiz?: boolean;
 };
 
 export function AppDialogs(props: AppDialogsProps): React.JSX.Element {
@@ -191,6 +198,9 @@ export function AppDialogs(props: AppDialogsProps): React.JSX.Element {
     setExportGraphFormatDraft,
     exportGraphObsidianOptionsDraft,
     setExportGraphObsidianOptionsDraft,
+    exportGraphStudyBookOptionsDraft,
+    setExportGraphStudyBookOptionsDraft,
+    exportGraphAiAuthenticated,
     exportGraphError,
     exportGraphLoading,
     exportGraph,
@@ -205,6 +215,9 @@ export function AppDialogs(props: AppDialogsProps): React.JSX.Element {
     setQuizAnswers,
     quizLoading,
     submitQuiz,
+    reviewQuizMistakes,
+    skipTopicFromQuiz,
+    canSkipTopicFromQuiz,
   } = props;
 
   const obsidianIssues = obsidianImportPreview?.issues ?? [];
@@ -344,6 +357,9 @@ export function AppDialogs(props: AppDialogsProps): React.JSX.Element {
         setFormatDraft={setExportGraphFormatDraft}
         obsidianOptionsDraft={exportGraphObsidianOptionsDraft}
         setObsidianOptionsDraft={setExportGraphObsidianOptionsDraft}
+        studyBookOptionsDraft={exportGraphStudyBookOptionsDraft}
+        setStudyBookOptionsDraft={setExportGraphStudyBookOptionsDraft}
+        aiAuthenticated={exportGraphAiAuthenticated}
         error={exportGraphError}
         loading={exportGraphLoading}
         exportGraph={exportGraph}
@@ -362,6 +378,9 @@ export function AppDialogs(props: AppDialogsProps): React.JSX.Element {
         setAnswers={setQuizAnswers}
         loading={quizLoading}
         submitQuiz={submitQuiz}
+        onReviewMistakes={reviewQuizMistakes}
+        onSkipTopic={skipTopicFromQuiz}
+        canSkipTopic={canSkipTopicFromQuiz}
         copy={copy}
       />
     </>

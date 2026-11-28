@@ -10,9 +10,17 @@ from typing import Iterator
 import re
 import uuid
 
-from app.models.api import GraphExportPackage, ObsidianExportOptions, ObsidianGraphExportPackage
-from app.models.domain import Artifact, ChatMessage, CreateGraphRequest, Edge, GraphChatThread, GraphProposal, GraphSummary, PatchOperation, QuizAttempt, ResourceLink, TopicQuizSession, SnapshotRecord, StudyGraph, Topic, UpdateWorkspaceConfigRequest, WorkspaceDocument, WorkspaceEnvelope, Zone
+from app.models.api import (
+    GraphExportPackage,
+    ObsidianExportOptions,
+    ObsidianGraphExportPackage,
+    StudyBookBlindspotItem,
+    StudyBookExportOptions,
+    StudyBookExportPackage,
+)
+from app.models.domain import Artifact, ChatMessage, CreateGraphRequest, Edge, GraphChatThread, GraphProposal, GraphSummary, MaterialSource, PatchOperation, QuizAttempt, ResourceLink, TopicKeyFile, TopicQuizSession, SnapshotRecord, StudyGraph, Topic, UpdateWorkspaceConfigRequest, WorkspaceDocument, WorkspaceEnvelope, Zone
 from app.services.obsidian_export import build_obsidian_export_package
+from app.services.study_book_export import build_study_book_export_package
 from app.services.repository_config import apply_workspace_config_update
 from app.services.proposal_validator import prerequisites_are_acyclic
 from app.services.repository_storage import (
@@ -423,10 +431,104 @@ class GraphRepository:
             rows = conn.execute("SELECT message_id, payload_json FROM chat_messages WHERE graph_id = ?", (graph.graph_id,)).fetchall()
             for row in rows:
                 message = json.loads(row["payload_json"])
+                changed = False
                 if ((message.get("proposal") or {}).get("proposal_envelope") or {}).get("proposal_id") == proposal.proposal_id:
                     message["proposal_applied"] = True
+                    changed = True
+                distillation = message.get("distillation")
+                if isinstance(distillation, dict) and ((distillation.get("proposal") or {}).get("proposal_envelope") or {}).get("proposal_id") == proposal.proposal_id:
+                    distillation["proposal_applied"] = True
+                    changed = True
+                if changed:
                     conn.execute("UPDATE chat_messages SET payload_json = ? WHERE message_id = ?", (json.dumps(message), row["message_id"]))
             return load_workspace_snapshot(conn, snapshot_id)
+
+    def apply_distillation_summary(self, graph_id: str, session_id: str, message_id: str) -> tuple[WorkspaceEnvelope, ChatMessage]:
+        with self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            session_row = self._resolve_session(conn, graph_id, session_id)
+            sid = str(session_row["session_id"])
+            row = conn.execute(
+                "SELECT payload_json FROM chat_messages WHERE session_id = ? AND message_id = ?",
+                (sid, message_id),
+            ).fetchone()
+            if row is None:
+                raise KeyError(message_id)
+            message = ChatMessage.model_validate_json(row["payload_json"])
+            if message.distillation is None or message.distillation.summary is None:
+                raise ValueError("This message does not contain a distillation summary.")
+            summary = message.distillation.summary
+            if summary.applied:
+                return load_current_workspace(conn), message
+            current = load_current_workspace(conn)
+            workspace = WorkspaceDocument.model_validate(deepcopy(current.workspace.model_dump()))
+            graph = next((item for item in workspace.graphs if item.graph_id == graph_id), None)
+            if graph is None:
+                raise ValueError(f"graph {graph_id} not found")
+            topic = next((item for item in graph.topics if item.id == summary.topic_id), None)
+            if topic is None:
+                raise ValueError(f"topic {summary.topic_id} not found")
+            old_graph_version = graph.version
+            artifact = Artifact(
+                id=f"artifact-{uuid.uuid4().hex[:12]}",
+                title=summary.title.strip(),
+                kind="note",
+                body=summary.body.strip(),
+            )
+            topic.artifacts = [*topic.artifacts, artifact]
+            snapshot_id = self._insert_snapshot(
+                conn,
+                workspace,
+                source="topic.artifact",
+                reason=f"save distilled summary to {topic.title}",
+                parent_snapshot_id=current.snapshot.id,
+            )
+            summary.applied = True
+            summary.artifact_id = artifact.id
+            if (
+                message.distillation.proposal is not None
+                and not message.distillation.proposal_applied
+                and message.distillation.proposal.proposal_envelope.base_graph_version == old_graph_version
+            ):
+                message.distillation.proposal.proposal_envelope.base_graph_version = graph.version
+            conn.execute(
+                "UPDATE chat_messages SET payload_json = ? WHERE session_id = ? AND message_id = ?",
+                (message.model_dump_json(), sid, message_id),
+            )
+            conn.execute(
+                "UPDATE chat_sessions SET updated_at = ? WHERE session_id = ?",
+                (datetime.now(timezone.utc).isoformat(), sid),
+            )
+            return load_workspace_snapshot(conn, snapshot_id), message
+
+    def revert_chat_from_message(self, graph_id: str, session_id: str, message_id: str) -> tuple[list[str], ChatMessage]:
+        with self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            session_row = self._resolve_session(conn, graph_id, session_id)
+            sid = str(session_row["session_id"])
+            target = conn.execute(
+                "SELECT ordinal, role, payload_json FROM chat_messages WHERE session_id = ? AND message_id = ?",
+                (sid, message_id),
+            ).fetchone()
+            if target is None:
+                raise KeyError(message_id)
+            reverted_message = ChatMessage.model_validate_json(target["payload_json"])
+            if reverted_message.role != "user":
+                raise ValueError("Only user messages can be reverted.")
+            to_delete = conn.execute(
+                "SELECT message_id FROM chat_messages WHERE session_id = ? AND ordinal >= ? ORDER BY ordinal ASC",
+                (sid, int(target["ordinal"])),
+            ).fetchall()
+            removed_ids = [str(item["message_id"]) for item in to_delete]
+            conn.execute(
+                "DELETE FROM chat_messages WHERE session_id = ? AND ordinal >= ?",
+                (sid, int(target["ordinal"])),
+            )
+            conn.execute(
+                "UPDATE chat_sessions SET updated_at = ? WHERE session_id = ?",
+                (datetime.now(timezone.utc).isoformat(), sid),
+            )
+            return removed_ids, reverted_message
 
     def snapshot(self, snapshot_id: int) -> WorkspaceEnvelope:
         with self._connect() as conn:
@@ -523,22 +625,23 @@ class GraphRepository:
             stack.extend(parents_by_child.get(current_topic_id, []))
 
         topic_map = {item.id: item for item in graph.topics}
-        graph.quiz_attempts = [item for item in graph.quiz_attempts if item.topic_id not in visited]
+        existing_attempt_topics = {item.topic_id for item in graph.quiz_attempts}
         for current_topic_id in topic_ids_to_close:
             current_topic = topic_map.get(current_topic_id)
             if current_topic is None:
                 continue
             current_topic.state = "solid"
-            graph.quiz_attempts.append(
-                QuizAttempt(
-                    id=f"manual-{uuid.uuid4().hex[:12]}",
-                    topic_id=current_topic_id,
-                    passed=True,
-                    score=1.0,
-                    question_count=max(1, workspace.config.quiz_question_count),
-                    closure_awarded=True,
+            if current_topic_id not in existing_attempt_topics:
+                graph.quiz_attempts.append(
+                    QuizAttempt(
+                        id=f"manual-{uuid.uuid4().hex[:12]}",
+                        topic_id=current_topic_id,
+                        passed=True,
+                        score=1.0,
+                        question_count=max(1, workspace.config.quiz_question_count),
+                        closure_awarded=True,
+                    )
                 )
-            )
         graph.version += 1
         workspace.active_graph_id = graph.graph_id
 
@@ -642,6 +745,55 @@ class GraphRepository:
             title=export_title,
             include_progress=include_progress,
             options=options or ObsidianExportOptions(),
+        )
+
+    def list_graph_chat_threads(self, graph_id: str) -> list[GraphChatThread]:
+        """Load all chat sessions and ordered messages for a graph in two queries."""
+        with self._connect() as conn:
+            session_rows = conn.execute(
+                "SELECT session_id, graph_id, topic_id, title, created_at, updated_at "
+                "FROM chat_sessions WHERE graph_id = ? ORDER BY updated_at ASC",
+                (graph_id,),
+            ).fetchall()
+            msg_rows = conn.execute(
+                "SELECT session_id, payload_json FROM chat_messages "
+                "WHERE graph_id = ? ORDER BY ordinal ASC",
+                (graph_id,),
+            ).fetchall()
+        messages_by_session: dict[str, list[ChatMessage]] = {}
+        for row in msg_rows:
+            sid = str(row["session_id"])
+            messages_by_session.setdefault(sid, []).append(ChatMessage.model_validate_json(row["payload_json"]))
+        return [
+            self._thread_from_session(row, graph_id, messages_by_session.get(str(row["session_id"]), []))
+            for row in session_rows
+        ]
+
+    def export_graph_to_study_book(
+        self,
+        graph_id: str,
+        *,
+        title: str | None = None,
+        include_progress: bool = True,
+        book_format: str = "html",
+        options: StudyBookExportOptions | None = None,
+        ai_blindspots_by_topic: dict[str, list[StudyBookBlindspotItem]] | None = None,
+    ) -> StudyBookExportPackage:
+        graph = StudyGraph.model_validate(deepcopy(self.graph(graph_id).model_dump()))
+        export_title = (title or graph.title).strip() or graph.title
+        if not include_progress:
+            for topic in graph.topics:
+                topic.state = "not_started"
+            graph.quiz_attempts = []
+        threads = self.list_graph_chat_threads(graph_id)
+        return build_study_book_export_package(
+            graph,
+            threads,
+            title=export_title,
+            include_progress=include_progress,
+            book_format=book_format,
+            options=options,
+            ai_blindspots_by_topic=ai_blindspots_by_topic,
         )
 
     def import_graph_package(
@@ -775,6 +927,93 @@ class GraphRepository:
                 workspace,
                 source="topic.artifact",
                 reason=f"append artifact to {topic.title}",
+                parent_snapshot_id=current.snapshot.id,
+            )
+        return self.snapshot(snapshot_id)
+
+    def add_material_source(self, graph_id: str, source: MaterialSource) -> WorkspaceEnvelope:
+        current = self.current()
+        workspace = WorkspaceDocument.model_validate(deepcopy(current.workspace.model_dump()))
+        graph = next((item for item in workspace.graphs if item.graph_id == graph_id), None)
+        if graph is None:
+            raise ValueError(f"graph {graph_id} not found")
+        if any(existing.path == source.path for existing in graph.material_sources):
+            raise ValueError("This folder is already bound to the graph.")
+        graph.material_sources = [*graph.material_sources, source]
+        with self._connect() as conn:
+            snapshot_id = self._insert_snapshot(
+                conn,
+                workspace,
+                source="graph.material",
+                reason=f"bind material folder {source.label}",
+                parent_snapshot_id=current.snapshot.id,
+            )
+        return self.snapshot(snapshot_id)
+
+    def remove_material_source(self, graph_id: str, source_id: str) -> WorkspaceEnvelope:
+        current = self.current()
+        workspace = WorkspaceDocument.model_validate(deepcopy(current.workspace.model_dump()))
+        graph = next((item for item in workspace.graphs if item.graph_id == graph_id), None)
+        if graph is None:
+            raise ValueError(f"graph {graph_id} not found")
+        removed = next((item for item in graph.material_sources if item.id == source_id), None)
+        if removed is None:
+            raise ValueError(f"material source {source_id} not found")
+        graph.material_sources = [item for item in graph.material_sources if item.id != source_id]
+        for topic in graph.topics:
+            topic.key_files = [item for item in topic.key_files if item.source_id != source_id]
+        with self._connect() as conn:
+            snapshot_id = self._insert_snapshot(
+                conn,
+                workspace,
+                source="graph.material",
+                reason=f"unbind material folder {removed.label}",
+                parent_snapshot_id=current.snapshot.id,
+            )
+        return self.snapshot(snapshot_id)
+
+    def add_topic_key_file(self, graph_id: str, topic_id: str, key_file: TopicKeyFile) -> WorkspaceEnvelope:
+        current = self.current()
+        workspace = WorkspaceDocument.model_validate(deepcopy(current.workspace.model_dump()))
+        graph = next((item for item in workspace.graphs if item.graph_id == graph_id), None)
+        if graph is None:
+            raise ValueError(f"graph {graph_id} not found")
+        if not any(item.id == key_file.source_id for item in graph.material_sources):
+            raise ValueError(f"material source {key_file.source_id} not found")
+        topic = next((item for item in graph.topics if item.id == topic_id), None)
+        if topic is None:
+            raise ValueError(f"topic {topic_id} not found")
+        if any(existing.source_id == key_file.source_id and existing.path == key_file.path for existing in topic.key_files):
+            raise ValueError("This key file is already pinned to the topic.")
+        topic.key_files = [*topic.key_files, key_file]
+        with self._connect() as conn:
+            snapshot_id = self._insert_snapshot(
+                conn,
+                workspace,
+                source="topic.key_file",
+                reason=f"pin key file to {topic.title}",
+                parent_snapshot_id=current.snapshot.id,
+            )
+        return self.snapshot(snapshot_id)
+
+    def remove_topic_key_file(self, graph_id: str, topic_id: str, key_file_id: str) -> WorkspaceEnvelope:
+        current = self.current()
+        workspace = WorkspaceDocument.model_validate(deepcopy(current.workspace.model_dump()))
+        graph = next((item for item in workspace.graphs if item.graph_id == graph_id), None)
+        if graph is None:
+            raise ValueError(f"graph {graph_id} not found")
+        topic = next((item for item in graph.topics if item.id == topic_id), None)
+        if topic is None:
+            raise ValueError(f"topic {topic_id} not found")
+        if not any(item.id == key_file_id for item in topic.key_files):
+            raise ValueError(f"key file {key_file_id} not found")
+        topic.key_files = [item for item in topic.key_files if item.id != key_file_id]
+        with self._connect() as conn:
+            snapshot_id = self._insert_snapshot(
+                conn,
+                workspace,
+                source="topic.key_file",
+                reason=f"unpin key file from {topic.title}",
                 parent_snapshot_id=current.snapshot.id,
             )
         return self.snapshot(snapshot_id)

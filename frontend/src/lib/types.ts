@@ -1,3 +1,6 @@
+export const GRAPH_LANGUAGES = ["uk", "ru", "en", "zh-CN"] as const;
+export type GraphLanguage = (typeof GRAPH_LANGUAGES)[number];
+
 export type TopicState =
   | "not_started"
   | "learning"
@@ -21,6 +24,19 @@ export type Artifact = {
   created_at: string;
 };
 
+export type MaterialSource = {
+  id: string;
+  label: string;
+  path: string;
+};
+
+export type TopicKeyFile = {
+  id: string;
+  source_id: string;
+  path: string;
+  note: string;
+};
+
 export type Topic = {
   id: string;
   title: string;
@@ -33,6 +49,7 @@ export type Topic = {
   zones: string[];
   resources: ResourceLink[];
   artifacts: Artifact[];
+  key_files?: TopicKeyFile[];
   metadata?: Record<string, unknown>;
 };
 
@@ -45,6 +62,8 @@ export type QuizAttempt = {
   closure_awarded: boolean;
   created_at: string;
   missed_questions: string[];
+  missed_reviews?: QuizQuestionReview[];
+  asked_prompts?: string[];
   fail_count: number;
 };
 
@@ -69,11 +88,12 @@ export type GraphEnvelope = {
   graph_id: string;
   subject: string;
   title: string;
-  language: "en" | "uk" | "ru";
+  language: GraphLanguage;
   version: number;
   topics: Topic[];
   edges: Edge[];
   zones: Zone[];
+  material_sources?: MaterialSource[];
   quiz_attempts: QuizAttempt[];
   metadata: Record<string, unknown>;
 };
@@ -126,7 +146,7 @@ export type QuizSubmitResponse = {
 export type CreateGraphRequest = {
   title: string;
   subject: string;
-  language: "en" | "uk" | "ru";
+  language: GraphLanguage;
   description: string;
 };
 
@@ -139,6 +159,21 @@ export type InlineChatQuiz = {
   status?: "pending" | "answered" | "interrupted";
 };
 
+export type DistillationSummary = {
+  topic_id: string;
+  title: string;
+  body: string;
+  applied?: boolean;
+  artifact_id?: string | null;
+};
+
+export type DistillationCard = {
+  distillation_id: string;
+  summary?: DistillationSummary | null;
+  proposal?: ProposalGenerateResponse | null;
+  proposal_applied?: boolean;
+};
+
 export type ChatMessage = {
   id: string;
   role: "user" | "assistant";
@@ -149,11 +184,12 @@ export type ChatMessage = {
   created_at: string;
   model?: string | null;
   fallback_used?: boolean;
-  action?: "answer" | "propose_ingest" | "propose_expand" | null;
+  action?: "answer" | "propose_ingest" | "propose_expand" | "propose_distillation" | null;
   planning_status?: string | null;
   planning_error?: string | null;
   proposal_applied?: boolean;
   proposal?: ProposalGenerateResponse | null;
+  distillation?: DistillationCard | null;
   inline_quiz?: InlineChatQuiz | null;
   question?: AgentQuestion | null;
   closure_quiz?: TopicQuizSession | null;
@@ -204,6 +240,7 @@ export type GraphChatStreamEvent = ({ event_id?: number; session_id?: string; ru
 export type GraphAssessment = {
   graph_id: string;
   cards: Array<{
+    kind: "roadmap" | "level" | "closure" | "review";
     label: string;
     value: string;
     tone: "neutral" | "good" | "warn";
@@ -358,12 +395,54 @@ export type ProposalGenerateResponse = {
 };
 
 export type ReasoningEffort = "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max" | "ultra";
+export type CustomProviderKind = "anthropic" | "openai_compatible";
+export type WebSearchKind = "tavily" | "brave";
+
+export type CustomProviderProfile = {
+  id: string;
+  name: string;
+  kind: CustomProviderKind;
+  base_url: string;
+  models: string[];
+  key_hint: string;
+  has_key: boolean;
+  enabled: boolean;
+  supports_native_web_search: boolean;
+};
+
+export type WebSearchProfile = {
+  provider: WebSearchKind;
+  key_hint: string;
+  has_key: boolean;
+  enabled: boolean;
+};
+
+export type ProviderPreset = {
+  id: string;
+  label: string;
+  kind: CustomProviderKind;
+  base_url: string;
+  default_models: string[];
+  supports_native_web_search: boolean;
+};
+
+export type ProvidersSummary = {
+  profiles: CustomProviderProfile[];
+  web_search: WebSearchProfile | null;
+  presets: ProviderPreset[];
+};
+
 export type ChatGPTModel = {
   id: string;
   model: string;
   displayName: string;
   description: string;
   isDefault: boolean;
+  providerId?: string;
+  providerName?: string;
+  providerKind?: "chatgpt" | CustomProviderKind;
+  supportsWebSearch?: boolean;
+  supportsReasoningEffort?: boolean;
 };
 export type ChatGPTLogin = {
   loginId: string;
@@ -379,6 +458,11 @@ export type ChatGPTAccount = {
   login: ChatGPTLogin | null;
   error: string | null;
   models: ChatGPTModel[];
+  ready?: boolean;
+  has_custom_providers?: boolean;
+  custom_providers?: CustomProviderProfile[];
+  web_search_config?: WebSearchProfile | null;
+  web_search_configured?: boolean;
 };
 
 export type WorkspaceConfig = {
@@ -446,7 +530,39 @@ export type GraphExportPackagePayload = {
   graph: GraphEnvelope;
 };
 
-export type GraphExportFormat = "mapmind_graph_export" | "mapmind_obsidian_export";
+export type GraphExportFormat =
+  | "mapmind_graph_export"
+  | "mapmind_obsidian_export"
+  | "mapmind_study_book_html"
+  | "mapmind_study_book_md";
+
+export type StudyBookMode = "handbook" | "blindspots_only";
+
+export type StudyBookExportOptions = {
+  mode: StudyBookMode;
+  zone_ids: string[];
+  include_notes: boolean;
+  include_mistakes: boolean;
+  include_chat_qa: boolean;
+  ai_synthesize_blindspots: boolean;
+};
+
+export type StudyBookExportPackagePayload = {
+  kind: "mapmind_study_book_export";
+  version: number;
+  exported_at: string;
+  source_graph_id: string;
+  title: string;
+  format: "html" | "markdown";
+  mode: StudyBookMode;
+  filename: string;
+  mime_type: string;
+  chapter_count: number;
+  topic_count: number;
+  mistake_count: number;
+  qa_count: number;
+  content: string;
+};
 
 export type ObsidianExportOptions = {
   use_folders_as_zones: boolean;

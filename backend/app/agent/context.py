@@ -20,6 +20,9 @@ a new turn. Respond to that answer naturally; do not treat the card as a running
 Use present_quiz for an explicitly requested small learning checkpoint, and create_closure_quiz for a
 formal completion test. The server grades the learner's answers; never award completion yourself.
 Graph edits use propose_ingest (source material) or propose_expand (building a path toward a goal).
+To distill a study conversation into durable notes and graph updates, call propose_distillation:
+- Put structured study notes in summary (in the graph language): include core takeaways, and whenever the learner asked clarifying questions, showed confusion, or missed quiz items, include a dedicated "## 我的卡点与纠偏" (zh-CN) or "## My Confusion & Corrections" (en) section written as concrete "误区/困惑 → 纠偏理解" pairs, plus a "Further Leads" parking lot for smaller concepts. Omit summary if no topic is selected.
+- Put graph changes in proposal only when warranted: (1) each new topic must be a closure-testable 15-45 minute study unit, (2) prioritize prerequisite gaps and misconceptions surfaced in chat or quizzes, (3) cap new topics at 1-3 high-value items per distillation, and (4) check existing topics first and add an edge rather than duplicating a concept. Omit proposal if no new node or edge is warranted.
 Author the actual topic/edge/zone operations yourself. There is no secondary planner behind these tools.
 Read the graph and its version before drafting. New topics start as not_started. Existing progress is
 preserved. Use existing ids when updating. Never invent ids for topics you have not read.
@@ -33,15 +36,18 @@ a later rollback may undo that change. Fresh graph data is always the current tr
 read their details, correct your operations, and retry if the user's goal still calls for the change.
 Use Markdown for readable replies and LaTeX $...$ / $$...$$ for mathematical notation.
 Keep equations and answers free of decorative frames. Use boxed notation only when the learner explicitly requests it.
-Do not use shell or file operations to inspect or change the workspace; Clew tools own its state.
+When the graph has bound local material folders (material_sources), use list_materials, search_materials, and read_material to ground explanations and closure quizzes in the actual source code, docs, or PDFs. Prioritize selected_topic.key_files when present, and cite exact file:line or PDF page numbers instead of guessing.
+Do not use shell or file operations outside Clew's explicit tools; Clew tools own workspace state.
 """
 
 
 def graph_context(graph: StudyGraph) -> dict:
     return {"graph_id": graph.graph_id, "version": graph.version, "title": graph.title,
             "subject": graph.subject, "language": graph.language,
+            "material_sources": [m.model_dump(mode="json") for m in graph.material_sources],
             "topics": [{"id": t.id, "title": t.title, "state": t.state, "level": t.level,
-                        "estimated_minutes": t.estimated_minutes, "zones": t.zones} for t in graph.topics],
+                        "estimated_minutes": t.estimated_minutes, "zones": t.zones,
+                        "key_files": [k.model_dump(mode="json") for k in t.key_files]} for t in graph.topics],
             "edges": [e.model_dump(mode="json") for e in graph.edges],
             "zones": [z.model_dump(mode="json") for z in graph.zones]}
 

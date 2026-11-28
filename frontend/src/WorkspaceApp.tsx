@@ -7,7 +7,7 @@ import { SettingsModal } from "./components/SettingsModal";
 import { WorkspaceShell } from "./components/WorkspaceShell";
 import { ClewLoader } from "./components/ClewLoader";
 import { API_BASE } from "./lib/api";
-import { APP_COPY } from "./lib/appCopy";
+import { getAppCopy, type LocalePreference } from "./lib/appLocale";
 import { setDebugModeEnabled } from "./lib/debugLogs";
 import {
   ASSISTANT_COLLAPSE_THRESHOLD,
@@ -17,6 +17,9 @@ import {
   type WorkspaceSurfacePayload,
 } from "./lib/appContracts";
 import { COMPACT_TOP_OVERLAY_THRESHOLD } from "./lib/appStatePersistence";
+import { readStoredCanvasStyle, writeStoredCanvasStyle, type CanvasStylePreferences } from "./lib/canvasStyle";
+import { readStoredCollapsedZones, writeStoredCollapsedZones } from "./lib/collapsedZones";
+import { computeTreeLayout, type TreeLayoutDirection } from "./lib/treeLayout";
 import { apiFetch, readErrorMessage } from "./lib/apiRequest";
 import { type ManualLayoutPositions, readManualLayoutPositions } from "./lib/appUiHelpers";
 import {
@@ -40,6 +43,7 @@ import { useWorkspaceChromeState } from "./hooks/useWorkspaceChromeState";
 import { useTopicPopover } from "./hooks/useTopicPopover";
 import { useModalAccessibility } from "./lib/useModalAccessibility";
 import type {
+  ChatMessage,
   CreateGraphRequest,
   GraphEnvelope,
   GraphAssessment,
@@ -53,6 +57,8 @@ import type {
   QuizSubmitResponse,
   DebugLogSnapshot,
   SnapshotRecord,
+  StudyBookExportOptions,
+  StudyBookExportPackagePayload,
   TopicQuizSession,
   WorkspaceEnvelope,
 } from "./lib/types";
@@ -68,8 +74,20 @@ function defaultObsidianExportOptions(): ObsidianExportOptions {
   };
 }
 
-export default function WorkspaceApp({ chatgpt }: { chatgpt: ChatGPTAccountController }): React.JSX.Element {
-  const copy = APP_COPY;
+function defaultStudyBookExportOptions(): StudyBookExportOptions {
+  return {
+    mode: "handbook",
+    zone_ids: [],
+    include_notes: true,
+    include_mistakes: true,
+    include_chat_qa: true,
+    ai_synthesize_blindspots: false,
+  };
+}
+
+export default function WorkspaceApp({ chatgpt, ...preference }: { chatgpt: ChatGPTAccountController } & LocalePreference): React.JSX.Element {
+  const { locale } = preference;
+  const copy = getAppCopy(locale);
   const [data, setData] = useState<WorkspaceEnvelope | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -82,9 +100,12 @@ export default function WorkspaceApp({ chatgpt }: { chatgpt: ChatGPTAccountContr
   const [createGraphDraft, setCreateGraphDraft] = useState<CreateGraphRequest>({
     title: "",
     subject: "",
-    language: "en",
+    language: locale,
     description: "",
   });
+  useEffect(() => {
+    setCreateGraphDraft((draft) => draft.title || draft.subject || draft.description ? draft : { ...draft, language: locale });
+  }, [locale]);
   const [createGraphOpen, setCreateGraphOpen] = useState(false);
   const [createGraphLoading, setCreateGraphLoading] = useState(false);
   const [createGraphError, setCreateGraphError] = useState<string | null>(null);
@@ -103,7 +124,7 @@ export default function WorkspaceApp({ chatgpt }: { chatgpt: ChatGPTAccountContr
   const [obsidianImportDraft, setObsidianImportDraft] = useState<Omit<ObsidianImportOptions, "vaultName">>({
     graphTitle: "",
     subject: "",
-    language: "en",
+    language: locale,
     relation: "bridges",
     useFoldersAsZones: true,
     autofillDescriptions: true,
@@ -115,13 +136,19 @@ export default function WorkspaceApp({ chatgpt }: { chatgpt: ChatGPTAccountContr
   const [exportGraphError, setExportGraphError] = useState<string | null>(null);
   const [exportGraphTitleDraft, setExportGraphTitleDraft] = useState("");
   const [exportGraphIncludeProgressDraft, setExportGraphIncludeProgressDraft] = useState(true);
-  const [exportGraphFormatDraft, setExportGraphFormatDraft] = useState<GraphExportFormat>("mapmind_graph_export");
+  const [exportGraphFormatDraft, setExportGraphFormatDraft] = useState<GraphExportFormat>("mapmind_study_book_html");
   const [exportGraphObsidianOptionsDraft, setExportGraphObsidianOptionsDraft] = useState<ObsidianExportOptions>(defaultObsidianExportOptions);
+  const [exportGraphStudyBookOptionsDraft, setExportGraphStudyBookOptionsDraft] = useState<StudyBookExportOptions>(defaultStudyBookExportOptions);
   const [deleteConfirm, setDeleteConfirm] = useState<{ graphId: string; title: string } | null>(null);
   const [sessionDeleteConfirm, setSessionDeleteConfirm] = useState<{ sessionId: string; title: string } | null>(null);
   const [graphLayoutEditing, setGraphLayoutEditing] = useState(false);
   const [graphLayoutDraft, setGraphLayoutDraft] = useState<ManualLayoutPositions | null>(null);
   const [graphLayoutSaving, setGraphLayoutSaving] = useState(false);
+  const [optimisticLayout, setOptimisticLayout] = useState<{
+    graphId: string;
+    positions: ManualLayoutPositions;
+  } | null>(null);
+  const layoutRequestSeqRef = useRef(0);
   const [renamingGraphId, setRenamingGraphId] = useState<string | null>(null);
   const [renameGraphDraft, setRenameGraphDraft] = useState("");
   const [renameGraphSaving, setRenameGraphSaving] = useState(false);
@@ -134,6 +161,13 @@ export default function WorkspaceApp({ chatgpt }: { chatgpt: ChatGPTAccountContr
     }
   });
   const [applyLoadingMessageId, setApplyLoadingMessageId] = useState<string | null>(null);
+  const [canvasStyle, setCanvasStyle] = useState<CanvasStylePreferences>(readStoredCanvasStyle);
+  useEffect(() => {
+    writeStoredCanvasStyle(canvasStyle);
+  }, [canvasStyle]);
+  const [distillSummaryLoadingId, setDistillSummaryLoadingId] = useState<string | null>(null);
+  const [revertLoadingMessageId, setRevertLoadingMessageId] = useState<string | null>(null);
+  const pendingDistillRef = useRef<{ sessionId: string; prompt: string } | null>(null);
   const [applyError, setApplyError] = useState<string | null>(null);
   const [assistantResizing, setAssistantResizing] = useState(false);
   const [configSaving, setConfigSaving] = useState(false);
@@ -221,22 +255,23 @@ export default function WorkspaceApp({ chatgpt }: { chatgpt: ChatGPTAccountContr
     setObsidianImportDraft({
       graphTitle: "",
       subject: "",
-      language: "en",
+      language: locale,
       relation: "bridges",
       useFoldersAsZones: true,
       autofillDescriptions: true,
       createArtifactsFromNotes: false,
       createPlaceholderTopics: false,
     });
-  }, []);
+  }, [locale]);
   const closeExportGraphModal = useCallback(() => {
     setExportGraphTarget(null);
     setExportGraphError(null);
     setExportGraphLoading(false);
     setExportGraphTitleDraft("");
     setExportGraphIncludeProgressDraft(true);
-    setExportGraphFormatDraft("mapmind_graph_export");
+    setExportGraphFormatDraft("mapmind_study_book_html");
     setExportGraphObsidianOptionsDraft(defaultObsidianExportOptions());
+    setExportGraphStudyBookOptionsDraft(defaultStudyBookExportOptions());
   }, []);
   const openImportGraphModal = useCallback(() => {
     setCreateGraphOpen(false);
@@ -245,15 +280,17 @@ export default function WorkspaceApp({ chatgpt }: { chatgpt: ChatGPTAccountContr
   }, []);
   const openImportObsidianModal = useCallback(() => {
     setCreateGraphOpen(false);
+    setObsidianImportDraft((current) => ({ ...current, language: locale }));
     setImportObsidianOpen(true);
     setImportObsidianError(null);
-  }, []);
+  }, [locale]);
   const openExportGraphModal = useCallback((graph: GraphEnvelope) => {
     setExportGraphTarget(graph);
     setExportGraphTitleDraft(graph.title);
     setExportGraphIncludeProgressDraft(true);
-    setExportGraphFormatDraft("mapmind_graph_export");
+    setExportGraphFormatDraft("mapmind_study_book_html");
     setExportGraphObsidianOptionsDraft(defaultObsidianExportOptions());
+    setExportGraphStudyBookOptionsDraft(defaultStudyBookExportOptions());
     setExportGraphError(null);
   }, []);
   const closeQuizModal = useCallback(() => {
@@ -338,7 +375,7 @@ export default function WorkspaceApp({ chatgpt }: { chatgpt: ChatGPTAccountContr
         const fallbackGraphId = payload.workspace.active_graph_id ?? payload.workspace.graphs[0]?.graph_id ?? null;
         setActiveGraphId((previous) => previous ?? fallbackGraphId);
       } catch (loadError) {
-        setError(loadError instanceof Error ? loadError.message : copy.errors.loadWorkspace);
+        setError(copy.errors.request(copy.errors.loadWorkspace, loadError instanceof Error ? loadError.message : ""));
       } finally {
         setLoading(false);
       }
@@ -352,8 +389,8 @@ export default function WorkspaceApp({ chatgpt }: { chatgpt: ChatGPTAccountContr
     return buildObsidianImportPreview(obsidianVaultEntries, {
       vaultName: obsidianVaultName,
       ...obsidianImportDraft,
-    });
-  }, [obsidianImportDraft, obsidianVaultEntries, obsidianVaultName]);
+    }, copy.obsidian);
+  }, [copy, obsidianImportDraft, obsidianVaultEntries, obsidianVaultName]);
 
   useEffect(() => {
     return () => {
@@ -368,7 +405,30 @@ export default function WorkspaceApp({ chatgpt }: { chatgpt: ChatGPTAccountContr
     () => availableGraphs.find((graph) => graph.graph_id === activeGraphId) ?? availableGraphs[0] ?? null,
     [activeGraphId, availableGraphs],
   );
-  const activeGraphManualLayout = useMemo(() => readManualLayoutPositions(activeGraph), [activeGraph]);
+  const activeGraphTopologyKey = useMemo(() => {
+    if (!activeGraph) return "";
+    const topics = activeGraph.topics.map((t) => `${t.id}:${(t.zones ?? []).join(",")}`).join("|");
+    const edges = activeGraph.edges.map((e) => `${e.source_topic_id}>${e.target_topic_id}:${e.relation}`).join("|");
+    return `${activeGraph.graph_id}#${topics}#${edges}`;
+  }, [activeGraph]);
+  const precomputedTreeLayouts = useMemo<{
+    vertical: ManualLayoutPositions;
+    horizontal: ManualLayoutPositions;
+  } | null>(() => {
+    if (!activeGraph || activeGraph.topics.length === 0) return null;
+    return {
+      vertical: computeTreeLayout(activeGraph, "vertical"),
+      horizontal: computeTreeLayout(activeGraph, "horizontal"),
+    };
+    // Recompute only when graph topology changes, not on layout position saves.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeGraphTopologyKey]);
+  const activeGraphManualLayout = useMemo(() => {
+    if (optimisticLayout && activeGraph && optimisticLayout.graphId === activeGraph.graph_id) {
+      return optimisticLayout.positions;
+    }
+    return readManualLayoutPositions(activeGraph);
+  }, [activeGraph, optimisticLayout]);
   const {
     selectedTopicId,
     setSelectedTopicId,
@@ -381,6 +441,54 @@ export default function WorkspaceApp({ chatgpt }: { chatgpt: ChatGPTAccountContr
     handleSelectedTopicAnchorChange,
     handleSelectTopic,
   } = useTopicPopover({ activeGraph, isMobileViewport, graphShellRef });
+
+  const [collapsedZoneList, setCollapsedZoneList] = useState<string[]>(() => readStoredCollapsedZones(null));
+  useEffect(() => {
+    setCollapsedZoneList(readStoredCollapsedZones(activeGraph?.graph_id));
+  }, [activeGraph?.graph_id]);
+
+  const collapsedZoneIds = useMemo(() => {
+    const validIds = new Set(activeGraph?.zones.map((z) => z.id) ?? []);
+    return new Set(collapsedZoneList.filter((id) => validIds.has(id)));
+  }, [activeGraph?.zones, collapsedZoneList]);
+
+  const toggleCollapseZone = useCallback(
+    (zoneId: string) => {
+      if (!activeGraph) return;
+      setCollapsedZoneList((prev) => {
+        const next = prev.includes(zoneId) ? prev.filter((id) => id !== zoneId) : [...prev, zoneId];
+        writeStoredCollapsedZones(activeGraph.graph_id, next);
+        return next;
+      });
+    },
+    [activeGraph],
+  );
+
+  const nonEmptyZoneIds = useMemo(
+    () => (activeGraph?.zones ?? []).filter((z) => z.topic_ids.length > 0).map((z) => z.id),
+    [activeGraph?.zones],
+  );
+  const allZonesCollapsed = nonEmptyZoneIds.length > 0 && nonEmptyZoneIds.every((id) => collapsedZoneIds.has(id));
+  const toggleCollapseAllZones = useCallback(() => {
+    if (!activeGraph || nonEmptyZoneIds.length === 0) return;
+    const next = allZonesCollapsed ? [] : [...nonEmptyZoneIds];
+    setCollapsedZoneList(next);
+    writeStoredCollapsedZones(activeGraph.graph_id, next);
+    if (!allZonesCollapsed) {
+      handleSelectTopic(null, null);
+    }
+  }, [activeGraph, allZonesCollapsed, handleSelectTopic, nonEmptyZoneIds]);
+
+  // If a topic inside a collapsed zone is selected (e.g. via prerequisite link or session tab), auto-expand its zone.
+  useEffect(() => {
+    if (!activeGraph || !selectedTopicId || collapsedZoneList.length === 0) return;
+    const owningZone = activeGraph.zones.find((z) => z.topic_ids.includes(selectedTopicId));
+    if (owningZone && collapsedZoneList.includes(owningZone.id)) {
+      const next = collapsedZoneList.filter((id) => id !== owningZone.id);
+      setCollapsedZoneList(next);
+      writeStoredCollapsedZones(activeGraph.graph_id, next);
+    }
+  }, [activeGraph, collapsedZoneList, selectedTopicId]);
   useLayoutEffect(() => {
     quizRequestRef.current += 1;
     setQuizLoading(false);
@@ -416,15 +524,14 @@ export default function WorkspaceApp({ chatgpt }: { chatgpt: ChatGPTAccountContr
           body: JSON.stringify(patch),
         });
         if (!response.ok) {
-          const payload = (await response.json().catch(() => null)) as { detail?: string } | null;
-          throw new Error(payload?.detail ?? `config update failed with ${response.status}`);
+          throw new Error(await readErrorMessage(response, copy.errors.updateConfig));
         }
         const payload = (await response.json()) as WorkspaceEnvelope;
         setData(payload);
         void loadSnapshots();
         void loadWorkspaceSurface();
       } catch (updateError) {
-        setError(updateError instanceof Error ? updateError.message : copy.errors.updateConfig);
+        setError(copy.errors.request(copy.errors.updateConfig, updateError instanceof Error ? updateError.message : ""));
       } finally {
         setConfigSaving(false);
       }
@@ -453,14 +560,13 @@ export default function WorkspaceApp({ chatgpt }: { chatgpt: ChatGPTAccountContr
     clearChatStateForGraph,
     loadSessions,
     sendChat,
-    answerInteraction, stopChat, reconnectChat,
+    answerInteraction, stopChat, revertMessage, reconnectChat,
   } = useGraphChatController({
     activeGraph,
     selectedTopicId,
     selectedChatModel,
     defaultModel: currentConfig?.default_model ?? null,
-    loadChatError: copy.errors.loadChat,
-    loadChatSessionsError: copy.errors.loadChatSessions,
+    copy,
   });
 
   useEffect(() => {
@@ -505,7 +611,7 @@ export default function WorkspaceApp({ chatgpt }: { chatgpt: ChatGPTAccountContr
   const selectedArtifacts = useMemo(() => selectedTopic?.artifacts ?? [], [selectedTopic]);
   const selectedClosureStatus = useMemo(() => computeClosureStatus(activeGraph, selectedTopicId), [activeGraph, selectedTopicId]);
   const activeAssessmentCards = useMemo(
-    () => (assessment?.cards.length ? assessment.cards : fallbackAssessment.cards).filter((card) => !["Roadmap", "Closure"].includes(card.label)),
+    () => (assessment?.cards.length ? assessment.cards : fallbackAssessment.cards).filter((card) => card.kind !== "roadmap" && card.kind !== "closure"),
     [assessment?.cards, fallbackAssessment.cards],
   );
   const onboardingNeedsFirstGraph = !activeGraph && workspaceSurface?.onboarding_state === "needs_first_graph";
@@ -522,8 +628,6 @@ export default function WorkspaceApp({ chatgpt }: { chatgpt: ChatGPTAccountContr
     }
     return () => setDebugModeEnabled(false);
   }, [debugModeEnabled]);
-  const activeMemoryOption = settingsState.activeMemoryOption;
-  const activeMemoryValues = settingsState.activeMemoryValues;
   const settingsDirty = settingsState.settingsDirty;
   const showGraphLoadingState = loading && !activeGraph;
   const showGraphEmptyState = !loading && !activeGraph;
@@ -538,7 +642,7 @@ export default function WorkspaceApp({ chatgpt }: { chatgpt: ChatGPTAccountContr
       }
       try {
         const response = await apiFetch(`${API_BASE}/api/v1/graphs/${activeGraph.graph_id}/assessment`);
-        if (!response.ok) throw new Error(`assessment failed with ${response.status}`);
+        if (!response.ok) throw new Error(await readErrorMessage(response, copy.errors.loadAssessment));
         const payload = (await response.json()) as GraphAssessment;
         if (cancelled) return;
         setAssessment(payload);
@@ -546,14 +650,14 @@ export default function WorkspaceApp({ chatgpt }: { chatgpt: ChatGPTAccountContr
       } catch (loadError) {
         if (cancelled) return;
         setAssessment(null);
-        setAssessmentError(loadError instanceof Error ? loadError.message : copy.errors.loadAssessment);
+        setAssessmentError(copy.errors.request(copy.errors.loadAssessment, loadError instanceof Error ? loadError.message : ""));
       }
     }
     void loadAssessment();
     return () => {
       cancelled = true;
     };
-  }, [activeGraph?.graph_id, data?.snapshot.id]);
+  }, [activeGraph?.graph_id, data?.snapshot.id, locale]);
 
   // Auto-scroll only for new messages or active assistant loading.
   const lastMessagesLengthRef = useRef(0);
@@ -622,10 +726,10 @@ export default function WorkspaceApp({ chatgpt }: { chatgpt: ChatGPTAccountContr
       }
       return payload;
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : copy.errors.loadWorkspace);
+      setError(copy.errors.request(copy.errors.loadWorkspace, cause instanceof Error ? cause.message : ""));
       return null;
     }
-  }, []);
+  }, [copy]);
 
   useEffect(() => {
     void loadSessionInfo();
@@ -636,11 +740,11 @@ export default function WorkspaceApp({ chatgpt }: { chatgpt: ChatGPTAccountContr
     setHistoryError(null);
     try {
       const response = await apiFetch(`${API_BASE}/api/v1/graph/snapshots`);
-      if (!response.ok) throw new Error(`snapshot list failed with ${response.status}`);
+      if (!response.ok) throw new Error(await readErrorMessage(response, copy.errors.loadHistory));
       const payload = (await response.json()) as { items: SnapshotRecord[] };
       setSnapshots(payload.items);
     } catch (loadError) {
-      setHistoryError(loadError instanceof Error ? loadError.message : copy.errors.loadHistory);
+      setHistoryError(copy.errors.request(copy.errors.loadHistory, loadError instanceof Error ? loadError.message : ""));
     } finally {
       setHistoryLoading(false);
     }
@@ -656,8 +760,7 @@ export default function WorkspaceApp({ chatgpt }: { chatgpt: ChatGPTAccountContr
         body: JSON.stringify(createGraphDraft),
       });
       if (!response.ok) {
-        const payload = (await response.json().catch(() => null)) as { detail?: string } | null;
-        throw new Error(payload?.detail ?? `graph create failed with ${response.status}`);
+        throw new Error(await readErrorMessage(response, copy.errors.createGraph));
       }
       const payload = (await response.json()) as WorkspaceEnvelope;
       setData(payload);
@@ -667,10 +770,10 @@ export default function WorkspaceApp({ chatgpt }: { chatgpt: ChatGPTAccountContr
       setSelectedTopicId(null);
       setSelectedTopicAnchor(null);
       setCreateGraphOpen(false);
-      setCreateGraphDraft({ title: "", subject: "", language: "en", description: "" });
+      setCreateGraphDraft({ title: "", subject: "", language: locale, description: "" });
       await loadSessionInfo();
     } catch (createError) {
-      setCreateGraphError(createError instanceof Error ? createError.message : copy.errors.createGraph);
+      setCreateGraphError(copy.errors.request(copy.errors.createGraph, createError instanceof Error ? createError.message : ""));
     } finally {
       setCreateGraphLoading(false);
     }
@@ -706,7 +809,7 @@ export default function WorkspaceApp({ chatgpt }: { chatgpt: ChatGPTAccountContr
       setCreateGraphOpen(false);
       await Promise.all([loadSnapshots(), loadSessionInfo()]);
     } catch (importError) {
-      setImportGraphError(importError instanceof Error ? importError.message : copy.errors.importGraph);
+      setImportGraphError(copy.errors.request(copy.errors.importGraph, importError instanceof Error ? importError.message : ""));
     } finally {
       setImportGraphLoading(false);
     }
@@ -717,7 +820,7 @@ export default function WorkspaceApp({ chatgpt }: { chatgpt: ChatGPTAccountContr
       const raw = await file.text();
       const parsed = JSON.parse(raw) as GraphExportPackagePayload;
       if (!parsed || parsed.kind !== "mapmind_graph_export" || !parsed.graph) {
-        throw new Error("unsupported graph package");
+        throw new Error(copy.errors.unsupportedPackage);
       }
       setImportGraphPayload(parsed);
       setImportGraphFileName(file.name);
@@ -727,7 +830,7 @@ export default function WorkspaceApp({ chatgpt }: { chatgpt: ChatGPTAccountContr
     } catch (parseError) {
       setImportGraphPayload(null);
       setImportGraphFileName(file.name);
-      setImportGraphError(parseError instanceof Error ? parseError.message : copy.errors.importGraph);
+      setImportGraphError(copy.errors.request(copy.errors.importGraph, parseError instanceof Error ? parseError.message : ""));
     }
   }
 
@@ -740,7 +843,7 @@ export default function WorkspaceApp({ chatgpt }: { chatgpt: ChatGPTAccountContr
       const relativePaths = fileList
         .map((file) => file.webkitRelativePath || file.name)
         .filter(Boolean);
-      const vaultRoot = relativePaths[0]?.split("/")[0] ?? "Obsidian Vault";
+      const vaultRoot = relativePaths[0]?.split("/")[0] ?? copy.dialogs.obsidianDefaultVault;
       const markdownFiles = fileList.filter((file) => {
         const relativePath = file.webkitRelativePath || file.name;
         return relativePath.toLowerCase().endsWith(".md");
@@ -756,7 +859,7 @@ export default function WorkspaceApp({ chatgpt }: { chatgpt: ChatGPTAccountContr
         }),
       );
       if (entries.length === 0) {
-        throw new Error(copy.dialogs.obsidianNoMarkdown);
+        throw new Error(copy.obsidian.noMarkdown);
       }
       setObsidianVaultName(vaultRoot);
       setObsidianVaultEntries(entries);
@@ -768,7 +871,7 @@ export default function WorkspaceApp({ chatgpt }: { chatgpt: ChatGPTAccountContr
     } catch (loadError) {
       setObsidianVaultName(null);
       setObsidianVaultEntries(null);
-      setImportObsidianError(loadError instanceof Error ? loadError.message : copy.errors.importGraph);
+      setImportObsidianError(copy.errors.request(copy.errors.importGraph, loadError instanceof Error ? loadError.message : ""));
     } finally {
       setImportObsidianLoading(false);
     }
@@ -804,7 +907,7 @@ export default function WorkspaceApp({ chatgpt }: { chatgpt: ChatGPTAccountContr
       setCreateGraphOpen(false);
       await Promise.all([loadSnapshots(), loadSessionInfo()]);
     } catch (importError) {
-      setImportObsidianError(importError instanceof Error ? importError.message : copy.errors.importGraph);
+      setImportObsidianError(copy.errors.request(copy.errors.importGraph, importError instanceof Error ? importError.message : ""));
     } finally {
       setImportObsidianLoading(false);
     }
@@ -817,6 +920,7 @@ export default function WorkspaceApp({ chatgpt }: { chatgpt: ChatGPTAccountContr
       if (exportGraphFormatDraft === "mapmind_obsidian_export" && !supportsObsidianDirectoryExport()) {
         throw new Error(copy.errors.exportGraphObsidianUnsupported);
       }
+      const isStudyBook = exportGraphFormatDraft === "mapmind_study_book_html" || exportGraphFormatDraft === "mapmind_study_book_md";
       const response = await apiFetch(`${API_BASE}/api/v1/workspace/graphs/${graph.graph_id}/export`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -825,6 +929,8 @@ export default function WorkspaceApp({ chatgpt }: { chatgpt: ChatGPTAccountContr
           include_progress: exportGraphIncludeProgressDraft,
           format: exportGraphFormatDraft,
           obsidian: exportGraphFormatDraft === "mapmind_obsidian_export" ? exportGraphObsidianOptionsDraft : undefined,
+          study_book: isStudyBook ? exportGraphStudyBookOptionsDraft : undefined,
+          model: isStudyBook && exportGraphStudyBookOptionsDraft.ai_synthesize_blindspots ? selectedChatModel : undefined,
         }),
       });
       if (!response.ok) {
@@ -833,12 +939,23 @@ export default function WorkspaceApp({ chatgpt }: { chatgpt: ChatGPTAccountContr
       if (exportGraphFormatDraft === "mapmind_obsidian_export") {
         const payload = (await response.json()) as ObsidianGraphExportPackagePayload;
         if (!await writeObsidianExportPackageToDirectory(payload)) return;
+      } else if (isStudyBook) {
+        const payload = (await response.json()) as StudyBookExportPackagePayload;
+        const blob = new Blob([payload.content], { type: payload.mime_type });
+        const objectUrl = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.href = objectUrl;
+        link.download = payload.filename;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        URL.revokeObjectURL(objectUrl);
       } else {
         const payload = (await response.json()) as GraphExportPackagePayload;
         const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
         const objectUrl = URL.createObjectURL(blob);
         const link = document.createElement("a");
-        const safeBase = (exportGraphTitleDraft.trim() || graph.title).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "graph";
+        const safeBase = (exportGraphTitleDraft.trim() || graph.title).toLowerCase().replace(/[^\p{L}\p{N}\p{M}]+/gu, "-").replace(/^-+|-+$/g, "") || "graph";
         link.href = objectUrl;
         link.download = `${safeBase}.mapmind-graph.json`;
         document.body.appendChild(link);
@@ -848,7 +965,7 @@ export default function WorkspaceApp({ chatgpt }: { chatgpt: ChatGPTAccountContr
       }
       closeExportGraphModal();
     } catch (exportError) {
-      setExportGraphError(exportError instanceof Error ? exportError.message : copy.errors.exportGraph);
+      setExportGraphError(copy.errors.request(copy.errors.exportGraph, exportError instanceof Error ? exportError.message : ""));
     } finally {
       setExportGraphLoading(false);
     }
@@ -857,7 +974,7 @@ export default function WorkspaceApp({ chatgpt }: { chatgpt: ChatGPTAccountContr
   async function renameGraph(graphId: string): Promise<void> {
     const nextTitle = renameGraphDraft.trim();
     if (!nextTitle) {
-      setError("graph title is required");
+      setError(copy.errors.requiredGraphTitle);
       return;
     }
     setRenameGraphSaving(true);
@@ -878,7 +995,7 @@ export default function WorkspaceApp({ chatgpt }: { chatgpt: ChatGPTAccountContr
       setRenameGraphDraft("");
       await Promise.all([loadSnapshots(), loadSessionInfo()]);
     } catch (renameError) {
-      setError(renameError instanceof Error ? renameError.message : copy.errors.renameGraph);
+      setError(copy.errors.request(copy.errors.renameGraph, renameError instanceof Error ? renameError.message : ""));
     } finally {
       setRenameGraphSaving(false);
     }
@@ -907,7 +1024,7 @@ export default function WorkspaceApp({ chatgpt }: { chatgpt: ChatGPTAccountContr
       setGraphLayoutDraft(null);
       void loadSnapshots();
     } catch (layoutError) {
-      setError(layoutError instanceof Error ? layoutError.message : copy.errors.saveGraphLayout);
+      setError(copy.errors.request(copy.errors.saveGraphLayout, layoutError instanceof Error ? layoutError.message : ""));
     } finally {
       setGraphLayoutSaving(false);
     }
@@ -917,6 +1034,39 @@ export default function WorkspaceApp({ chatgpt }: { chatgpt: ChatGPTAccountContr
     setError(null);
     setGraphLayoutDraft(activeGraphManualLayout);
     setGraphLayoutEditing(true);
+  }
+
+  async function arrangeTreeLayout(direction: TreeLayoutDirection): Promise<void> {
+    if (!activeGraph || activeGraph.topics.length === 0) return;
+    const graphId = activeGraph.graph_id;
+    const positions = precomputedTreeLayouts?.[direction] ?? computeTreeLayout(activeGraph, direction);
+    const reqSeq = ++layoutRequestSeqRef.current;
+
+    // Instant optimistic canvas switch using the precomputed layout; persist asynchronously in the background.
+    setError(null);
+    setGraphLayoutEditing(false);
+    setGraphLayoutDraft(null);
+    setOptimisticLayout({ graphId, positions });
+
+    try {
+      const response = await apiFetch(`${API_BASE}/api/v1/workspace/graphs/${graphId}/layout`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ positions }),
+      });
+      if (!response.ok) {
+        throw new Error(await readErrorMessage(response, copy.errors.saveGraphLayout));
+      }
+      const payload = (await response.json()) as WorkspaceEnvelope;
+      if (reqSeq !== layoutRequestSeqRef.current) return;
+      setData(payload);
+      setOptimisticLayout(null);
+      void loadSnapshots();
+    } catch (layoutError) {
+      if (reqSeq !== layoutRequestSeqRef.current) return;
+      setOptimisticLayout(null);
+      setError(copy.errors.request(copy.errors.saveGraphLayout, layoutError instanceof Error ? layoutError.message : ""));
+    }
   }
 
   async function applyProposalFromMessage(messageId: string, proposal: ProposalGenerateResponse): Promise<void> {
@@ -947,11 +1097,183 @@ export default function WorkspaceApp({ chatgpt }: { chatgpt: ChatGPTAccountContr
         messages: current.messages.map((message) => message.id === messageId ? { ...message, proposal_applied: true } : message),
       }));
     } catch (applyLoadError) {
-      setApplyError(applyLoadError instanceof Error ? applyLoadError.message : copy.errors.applyProposal);
+      setApplyError(copy.errors.request(copy.errors.applyProposal, applyLoadError instanceof Error ? applyLoadError.message : ""));
     } finally {
       setApplyLoadingMessageId(null);
     }
   }
+
+  async function applyDistillationSummary(messageId: string): Promise<ChatMessage | null> {
+    const sessionId = currentChatState.sessionId ?? activeSessionId;
+    if (!activeGraph || !sessionId) return null;
+    setDistillSummaryLoadingId(messageId);
+    setApplyError(null);
+    try {
+      const response = await apiFetch(`${API_BASE}/api/v1/graphs/${activeGraph.graph_id}/chat/distill/apply-summary`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ session_id: sessionId, message_id: messageId }),
+      });
+      if (!response.ok) {
+        throw new Error(await readErrorMessage(response, copy.sessions.distillationSaveSummaryFailed));
+      }
+      const payload = (await response.json()) as { workspace: WorkspaceEnvelope; message: ChatMessage };
+      setData(payload.workspace);
+      void loadSnapshots();
+      updateCurrentChatState((current) => ({
+        ...current,
+        messages: current.messages.map((message) => message.id === messageId ? payload.message : message),
+      }));
+      return payload.message;
+    } catch (saveError) {
+      setApplyError(copy.errors.request(copy.sessions.distillationSaveSummaryFailed, saveError instanceof Error ? saveError.message : ""));
+      return null;
+    } finally {
+      setDistillSummaryLoadingId(null);
+    }
+  }
+
+  async function applyDistillationProposal(messageId: string, proposal: ProposalGenerateResponse): Promise<void> {
+    if (!activeGraph) return;
+    setApplyLoadingMessageId(messageId);
+    setApplyError(null);
+    try {
+      const response = await apiFetch(`${API_BASE}/api/v1/graphs/${activeGraph.graph_id}/apply`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(proposal.proposal_envelope),
+      });
+      if (!response.ok) {
+        throw new Error(await readErrorMessage(response, copy.errors.applyProposal));
+      }
+      const payload = (await response.json()) as WorkspaceEnvelope;
+      setData(payload);
+      setActiveGraphId(proposal.proposal_envelope.graph_id);
+      void loadSnapshots();
+      updateCurrentChatState((current) => ({
+        ...current,
+        messages: current.messages.map((message) =>
+          message.id === messageId && message.distillation
+            ? { ...message, distillation: { ...message.distillation, proposal_applied: true } }
+            : message,
+        ),
+      }));
+    } catch (applyLoadError) {
+      setApplyError(copy.errors.request(copy.errors.applyProposal, applyLoadError instanceof Error ? applyLoadError.message : ""));
+    } finally {
+      setApplyLoadingMessageId(null);
+    }
+  }
+
+  async function applyDistillationAll(messageId: string, distillation: NonNullable<ChatMessage["distillation"]>): Promise<void> {
+    let nextProposal = distillation.proposal ?? null;
+    if (distillation.summary && !distillation.summary.applied) {
+      const updated = await applyDistillationSummary(messageId);
+      if (!updated) return;
+      nextProposal = updated.distillation?.proposal ?? nextProposal;
+    }
+    if (nextProposal && !distillation.proposal_applied && nextProposal.apply_plan.validation.ok) {
+      await applyDistillationProposal(messageId, nextProposal);
+    }
+  }
+
+  async function distillConversation(): Promise<void> {
+    if (!activeGraph) return;
+    const activeSessionTopicId = chatSessions.find((session) => session.session_id === (currentChatState.sessionId ?? activeSessionId))?.topic_id ?? null;
+    const targetTopicId = activeSessionTopicId ?? selectedTopicId;
+    const targetTopic = targetTopicId ? activeGraph.topics.find((topic) => topic.id === targetTopicId) ?? null : null;
+    const prompt = targetTopic ? copy.sessions.distillPromptTopic(targetTopic.title) : copy.sessions.distillPromptGraph;
+    await sendChat(prompt);
+  }
+
+  async function distillBlindspots(): Promise<void> {
+    if (!activeGraph) return;
+    setAssistantWidth((current) => Math.max(current, ASSISTANT_MIN_WIDTH));
+    const activeSessionTopicId = chatSessions.find((session) => session.session_id === (currentChatState.sessionId ?? activeSessionId))?.topic_id ?? null;
+    const targetTopicId = activeSessionTopicId ?? selectedTopicId;
+    const targetTopic = targetTopicId ? activeGraph.topics.find((topic) => topic.id === targetTopicId) ?? null : null;
+    if (!targetTopic) {
+      await sendChat(copy.sessions.distillBlindspotsPromptGraph);
+      return;
+    }
+    const missedLines: string[] = [];
+    const seen = new Set<string>();
+    for (const attempt of [...activeGraph.quiz_attempts].reverse()) {
+      if (attempt.topic_id !== targetTopic.id) continue;
+      for (const rev of attempt.missed_reviews ?? []) {
+        const key = rev.prompt.trim().toLowerCase();
+        if (!key || seen.has(key)) continue;
+        seen.add(key);
+        missedLines.push(`- ${rev.prompt} (${rev.selected_choice ? `${copy.quiz.yourAnswer(rev.selected_choice)}; ` : ""}${copy.quiz.correctAnswer(rev.correct_choice)})`);
+      }
+    }
+    const prompt = copy.sessions.distillBlindspotsPromptTopic(targetTopic.title, missedLines.slice(0, 10).join("\n"));
+    const matchingSession = chatSessions.find((session) => session.topic_id === targetTopic.id);
+    if (matchingSession && activeSessionId !== matchingSession.session_id) {
+      pendingDistillRef.current = { sessionId: matchingSession.session_id, prompt };
+      setActiveSessionId(matchingSession.session_id);
+      return;
+    }
+    await sendChat(prompt);
+  }
+
+  async function handleRevertMessage(messageId: string): Promise<void> {
+    setRevertLoadingMessageId(messageId);
+    try {
+      const restored = await revertMessage(messageId);
+      if (restored !== null) {
+        window.requestAnimationFrame(() => chatComposerRef.current?.focus());
+      }
+    } finally {
+      setRevertLoadingMessageId(null);
+    }
+  }
+
+  async function distillAfterQuiz(): Promise<void> {
+    if (!activeGraph || !selectedTopic) return;
+    setAssistantWidth((current) => Math.max(current, ASSISTANT_MIN_WIDTH));
+    const prompt = copy.sessions.distillPromptTopic(selectedTopic.title);
+    const matchingSession = chatSessions.find((session) => session.topic_id === selectedTopic.id);
+    if (matchingSession && activeSessionId !== matchingSession.session_id) {
+      pendingDistillRef.current = { sessionId: matchingSession.session_id, prompt };
+      setActiveSessionId(matchingSession.session_id);
+      return;
+    }
+    await sendChat(prompt);
+  }
+
+  async function reviewQuizMistakes(missed: QuizQuestionReview[]): Promise<void> {
+    if (!activeGraph || !selectedTopic || missed.length === 0) return;
+    setQuizSession(null);
+    setQuizReviews(null);
+    setAssistantWidth((current) => Math.max(current, ASSISTANT_MIN_WIDTH));
+    const formatted = missed
+      .map((item, idx) => {
+        const lines = [
+          `${idx + 1}. ${item.prompt}`,
+          item.selected_choice ? `   - ${copy.quiz.yourAnswer(item.selected_choice)}` : null,
+          `   - ${copy.quiz.correctAnswer(item.correct_choice)}`,
+        ].filter(Boolean);
+        return lines.join("\n");
+      })
+      .join("\n\n");
+    const prompt = copy.quiz.reviewMistakesPrompt(selectedTopic.title, formatted);
+    const matchingSession = chatSessions.find((session) => session.topic_id === selectedTopic.id);
+    if (matchingSession && activeSessionId !== matchingSession.session_id) {
+      pendingDistillRef.current = { sessionId: matchingSession.session_id, prompt };
+      setActiveSessionId(matchingSession.session_id);
+      return;
+    }
+    await sendChat(prompt);
+  }
+
+  useEffect(() => {
+    const pending = pendingDistillRef.current;
+    if (!pending) return;
+    if (currentChatState.sessionId !== pending.sessionId || chatThreadLoading || chatLoading) return;
+    pendingDistillRef.current = null;
+    void sendChat(pending.prompt);
+  }, [currentChatState.sessionId, chatThreadLoading, chatLoading, sendChat]);
 
   async function startQuiz(): Promise<void> {
     if (!activeGraph || !selectedTopic) return;
@@ -975,7 +1297,7 @@ export default function WorkspaceApp({ chatgpt }: { chatgpt: ChatGPTAccountContr
       setQuizAnswers({});
     } catch (quizLoadError) {
       if (requestId !== quizRequestRef.current) return;
-      setQuizError(quizLoadError instanceof Error ? quizLoadError.message : copy.errors.startQuiz);
+      setQuizError(copy.errors.request(copy.errors.startQuiz, quizLoadError instanceof Error ? quizLoadError.message : ""));
     } finally {
       if (requestId === quizRequestRef.current) setQuizLoading(false);
     }
@@ -1001,7 +1323,7 @@ export default function WorkspaceApp({ chatgpt }: { chatgpt: ChatGPTAccountContr
       setQuizAnswers({});
       setQuizSuccess(copy.closure.markAsFinished);
     } catch (markError) {
-      setQuizError(markError instanceof Error ? markError.message : copy.errors.submitQuiz);
+      setQuizError(copy.errors.request(copy.errors.submitQuiz, markError instanceof Error ? markError.message : ""));
     } finally {
       setQuizLoading(false);
     }
@@ -1031,6 +1353,62 @@ export default function WorkspaceApp({ chatgpt }: { chatgpt: ChatGPTAccountContr
     });
     if (!response.ok) {
       throw new Error(await readErrorMessage(response, copy.dialogs.addArtifactTitle));
+    }
+    const payload = (await response.json()) as WorkspaceEnvelope;
+    setData(payload);
+    await loadSnapshots();
+  }
+
+  async function addMaterialSource(path: string, label?: string): Promise<void> {
+    if (!activeGraph) return;
+    const response = await apiFetch(`${API_BASE}/api/v1/workspace/graphs/${activeGraph.graph_id}/materials`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ path: path.trim(), ...(label ? { label: label.trim() } : {}) }),
+    });
+    if (!response.ok) {
+      throw new Error(await readErrorMessage(response, copy.sessions.materialsAddFailed));
+    }
+    const payload = (await response.json()) as WorkspaceEnvelope;
+    setData(payload);
+    await loadSnapshots();
+  }
+
+  async function removeMaterialSource(sourceId: string): Promise<void> {
+    if (!activeGraph) return;
+    const response = await apiFetch(`${API_BASE}/api/v1/workspace/graphs/${activeGraph.graph_id}/materials/${encodeURIComponent(sourceId)}`, {
+      method: "DELETE",
+    });
+    if (!response.ok) {
+      throw new Error(await readErrorMessage(response, copy.sessions.materialsRemoveFailed));
+    }
+    const payload = (await response.json()) as WorkspaceEnvelope;
+    setData(payload);
+    await loadSnapshots();
+  }
+
+  async function addTopicKeyFile(topicId: string, sourceId: string, path: string, note = ""): Promise<void> {
+    if (!activeGraph) return;
+    const response = await apiFetch(`${API_BASE}/api/v1/workspace/graphs/${activeGraph.graph_id}/topics/${topicId}/key-files`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ source_id: sourceId, path: path.trim(), note: note.trim() }),
+    });
+    if (!response.ok) {
+      throw new Error(await readErrorMessage(response, copy.sessions.keyFilesAddFailed));
+    }
+    const payload = (await response.json()) as WorkspaceEnvelope;
+    setData(payload);
+    await loadSnapshots();
+  }
+
+  async function removeTopicKeyFile(topicId: string, keyFileId: string): Promise<void> {
+    if (!activeGraph) return;
+    const response = await apiFetch(`${API_BASE}/api/v1/workspace/graphs/${activeGraph.graph_id}/topics/${topicId}/key-files/${encodeURIComponent(keyFileId)}`, {
+      method: "DELETE",
+    });
+    if (!response.ok) {
+      throw new Error(await readErrorMessage(response, copy.sessions.keyFilesRemoveFailed));
     }
     const payload = (await response.json()) as WorkspaceEnvelope;
     setData(payload);
@@ -1069,7 +1447,7 @@ export default function WorkspaceApp({ chatgpt }: { chatgpt: ChatGPTAccountContr
       }
     } catch (quizSubmitError) {
       if (requestId !== quizRequestRef.current) return;
-      setQuizError(quizSubmitError instanceof Error ? quizSubmitError.message : copy.errors.submitQuiz);
+      setQuizError(copy.errors.request(copy.errors.submitQuiz, quizSubmitError instanceof Error ? quizSubmitError.message : ""));
     } finally {
       if (requestId === quizRequestRef.current) setQuizLoading(false);
     }
@@ -1094,7 +1472,7 @@ export default function WorkspaceApp({ chatgpt }: { chatgpt: ChatGPTAccountContr
       setQuizReviews(null);
       await loadSnapshots();
     } catch (rollbackError) {
-      setHistoryError(rollbackError instanceof Error ? rollbackError.message : copy.errors.rollbackSnapshot);
+      setHistoryError(copy.errors.request(copy.errors.rollbackSnapshot, rollbackError instanceof Error ? rollbackError.message : ""));
     } finally {
       setHistoryLoading(false);
     }
@@ -1192,18 +1570,18 @@ export default function WorkspaceApp({ chatgpt }: { chatgpt: ChatGPTAccountContr
     try {
       const response = await apiFetch(`${API_BASE}/api/v1/debug/logs`);
       if (!response.ok) {
-        throw new Error(`debug logs failed with ${response.status}`);
+        throw new Error(await readErrorMessage(response, copy.errors.loadLogs));
       }
       const payload = (await response.json()) as DebugLogSnapshot;
       setDebugLogs(payload);
       setDebugLogsError(null);
     } catch (loadError) {
-      setDebugLogsError(loadError instanceof Error ? loadError.message : "Failed to load debug logs");
+      setDebugLogsError(copy.errors.request(copy.errors.loadLogs, loadError instanceof Error ? loadError.message : ""));
     } finally {
       debugLogsInFlightRef.current = false;
       setDebugLogsLoading(false);
     }
-  }, []);
+  }, [copy]);
 
   useEffect(() => {
     if (!isLogsOpen || !debugModeEnabled) return;
@@ -1219,11 +1597,11 @@ export default function WorkspaceApp({ chatgpt }: { chatgpt: ChatGPTAccountContr
   if (!data || !workspaceSurface) {
     if (error) return <main className="launchLoading"><div className="launchError">
       <p role="alert">{error}</p>
-      <button className="uiButton" type="button" onClick={() => { bootstrapStartedRef.current = false; setError(null); setBootstrapRevision((value) => value + 1); }}>Try again</button>
+      <button className="uiButton" type="button" onClick={() => { bootstrapStartedRef.current = false; setError(null); setBootstrapRevision((value) => value + 1); }}>{copy.launch.retry}</button>
     </div></main>;
     return (
-      <div className="clewLaunchInline" role="status" aria-label="Loading Clew">
-        <ClewLoader size={56} />
+      <div className="clewLaunchInline">
+        <ClewLoader size={56} label={copy.launch.loading} />
       </div>
     );
   }
@@ -1273,6 +1651,7 @@ export default function WorkspaceApp({ chatgpt }: { chatgpt: ChatGPTAccountContr
           viewportCenteredZoom,
           setViewportCenteredZoom,
           straightEdgeLinesEnabled,
+          canvasStyle,
           topOverlayCompact,
           overlayLeftOffset,
           overlayRightOffset,
@@ -1297,6 +1676,11 @@ export default function WorkspaceApp({ chatgpt }: { chatgpt: ChatGPTAccountContr
           graphLayoutSaving,
           saveGraphLayout,
           startGraphLayoutEdit,
+          arrangeTreeLayout,
+          collapsedZoneIds,
+          toggleCollapseZone,
+          allZonesCollapsed,
+          toggleCollapseAllZones,
           setGraphLayoutEditing,
           setGraphLayoutDraft,
           graphShellRef,
@@ -1330,11 +1714,16 @@ export default function WorkspaceApp({ chatgpt }: { chatgpt: ChatGPTAccountContr
           quizLoading,
           startQuiz,
           markTopicFinished,
+          distillAfterQuiz,
+          distillBlindspots,
+          reviewQuizMistakes,
+          addTopicKeyFile,
+          removeTopicKeyFile,
         }}
         assistant={{
           agentControls: {
             answer: answerInteraction, stop: stopChat, reconnect: reconnectChat,
-            authenticated: !!chatgpt.account?.authenticated && !!chatgpt.account?.sharing, connect: () => setSettingsOpen(true),
+            authenticated: Boolean(chatgpt.account?.ready ?? (chatgpt.account?.authenticated && chatgpt.account?.sharing)), connect: () => setSettingsOpen(true),
             openQuiz: (session) => {
               quizRequestRef.current += 1;
               setQuizLoading(false);
@@ -1344,6 +1733,14 @@ export default function WorkspaceApp({ chatgpt }: { chatgpt: ChatGPTAccountContr
               setQuizReviews(null);
               setQuizError(null);
             },
+            distillConversation,
+            distillBlindspots,
+            applyDistillationSummary: async (messageId) => { await applyDistillationSummary(messageId); },
+            applyDistillationAll,
+            applyDistillationProposal,
+            distillSummaryLoadingId,
+            revertMessage: handleRevertMessage,
+            revertLoadingMessageId,
           },
           assistantResizing,
           handleAssistantResize,
@@ -1384,9 +1781,12 @@ export default function WorkspaceApp({ chatgpt }: { chatgpt: ChatGPTAccountContr
         drafts={{ ...settingsState.drafts, themeMode: themeModeDraft }}
         setDrafts={{ ...settingsState.setDrafts, themeMode: setThemeModeDraft }}
         chatgpt={chatgpt}
-        activeMemoryOption={activeMemoryOption}
-        activeMemoryValues={activeMemoryValues}
+        {...preference}
         activeGraph={activeGraph}
+        addMaterialSource={addMaterialSource}
+        removeMaterialSource={removeMaterialSource}
+        canvasStyle={canvasStyle}
+        setCanvasStyle={setCanvasStyle}
         loadSnapshots={loadSnapshots}
         historyLoading={historyLoading}
         historyError={historyError}
@@ -1400,6 +1800,7 @@ export default function WorkspaceApp({ chatgpt }: { chatgpt: ChatGPTAccountContr
 
       <DebugLogsModal
         copy={copy}
+        locale={locale}
         open={isLogsOpen}
         onClose={() => setLogsOpen(false)}
         logs={debugLogs}
@@ -1482,6 +1883,9 @@ export default function WorkspaceApp({ chatgpt }: { chatgpt: ChatGPTAccountContr
         setExportGraphFormatDraft={setExportGraphFormatDraft}
         exportGraphObsidianOptionsDraft={exportGraphObsidianOptionsDraft}
         setExportGraphObsidianOptionsDraft={setExportGraphObsidianOptionsDraft}
+        exportGraphStudyBookOptionsDraft={exportGraphStudyBookOptionsDraft}
+        setExportGraphStudyBookOptionsDraft={setExportGraphStudyBookOptionsDraft}
+        exportGraphAiAuthenticated={Boolean(chatgpt.account?.ready ?? (chatgpt.account?.authenticated && chatgpt.account?.sharing))}
         exportGraphError={exportGraphError}
         exportGraphLoading={exportGraphLoading}
         exportGraph={exportGraph}
@@ -1496,6 +1900,9 @@ export default function WorkspaceApp({ chatgpt }: { chatgpt: ChatGPTAccountContr
         setQuizAnswers={setQuizAnswers}
         quizLoading={quizLoading}
         submitQuiz={submitQuiz}
+        reviewQuizMistakes={reviewQuizMistakes}
+        skipTopicFromQuiz={markTopicFinished}
+        canSkipTopicFromQuiz={Boolean(selectedTopic && selectedTopic.state !== "solid" && selectedTopic.state !== "mastered")}
       />
     </div>
   );

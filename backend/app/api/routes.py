@@ -4,6 +4,7 @@ from hashlib import sha1
 from typing import TYPE_CHECKING
 
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.api.deps import (
     ensure_debug_logs_enabled,
@@ -19,11 +20,15 @@ from app.api.route_helpers import (
     local_workspace_surface as _local_workspace_surface,
     normalize_resource_url as _normalize_resource_url,
     resource_label_from_url as _resource_label_from_url,
+    request_locale,
     workspace_config_payload as _workspace_config_payload,
 )
 from app.core.config import Settings, get_settings
-from app.models.api import GraphExportRequest, GraphImportRequest, GraphLayoutPositionRequest, RenameGraphRequest, TopicArtifactInput, TopicResourceInput, UpdateGraphLayoutRequest
-from app.models.domain import Artifact, CreateGraphRequest, GraphProposalEnvelope, QuizStartRequest, QuizStartResponse, QuizSubmitRequest, QuizSubmitResponse, ResourceLink, UpdateWorkspaceConfigRequest
+from app.core.locale import AppLocale
+from app.models.api import GraphExportRequest, GraphImportRequest, GraphLayoutPositionRequest, RenameGraphRequest, StudyBookExportOptions, TopicArtifactInput, TopicResourceInput, UpdateGraphLayoutRequest
+from app.services.study_book_export import collect_study_book_synthesis_inputs
+from app.models.domain import Artifact, CreateGraphRequest, GraphProposalEnvelope, MaterialSource, QuizStartRequest, QuizStartResponse, QuizSubmitRequest, QuizSubmitResponse, ResourceLink, TopicKeyFile, UpdateWorkspaceConfigRequest
+from app.services.material_service import MaterialError, MaterialService
 from app.services.debug_log_service import DebugClientLogRequest, get_debug_log_service
 from app.services.proposal_normalizer import ProposalNormalizer
 from app.services.repository import GraphRepository, ProposalConflictError
@@ -220,11 +225,118 @@ def append_topic_artifact(
     return _workspace_config_payload(workspace, settings)
 
 
+class MaterialSourceInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    path: str = Field(min_length=1, max_length=2000)
+    label: str | None = Field(default=None, max_length=120)
+
+
+class TopicKeyFileInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    source_id: str = Field(min_length=1, max_length=120)
+    path: str = Field(min_length=1, max_length=1000)
+    note: str = Field(default="", max_length=500)
+
+
+@router.post("/api/v1/workspace/graphs/{graph_id}/materials")
+def add_graph_material_source(
+    graph_id: str,
+    body: MaterialSourceInput,
+    repository: GraphRepository = Depends(get_repository),
+    settings: Settings = Depends(get_settings),
+) -> dict:
+    service = MaterialService()
+    try:
+        resolved = service.validate_folder_path(body.path)
+    except MaterialError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    label = (body.label or "").strip() or resolved.name or str(resolved)
+    source = MaterialSource(
+        id=f"mat-{sha1(str(resolved).encode('utf-8')).hexdigest()[:12]}",
+        label=label,
+        path=str(resolved),
+    )
+    try:
+        workspace = repository.add_material_source(graph_id, source)
+    except ValueError as exc:
+        message = str(exc)
+        status_code = 404 if "not found" in message else 400
+        raise HTTPException(status_code=status_code, detail=message) from exc
+    return _workspace_config_payload(workspace, settings)
+
+
+@router.delete("/api/v1/workspace/graphs/{graph_id}/materials/{source_id}")
+def delete_graph_material_source(
+    graph_id: str,
+    source_id: str,
+    repository: GraphRepository = Depends(get_repository),
+    settings: Settings = Depends(get_settings),
+) -> dict:
+    try:
+        workspace = repository.remove_material_source(graph_id, source_id)
+    except ValueError as exc:
+        message = str(exc)
+        status_code = 404 if "not found" in message else 400
+        raise HTTPException(status_code=status_code, detail=message) from exc
+    return _workspace_config_payload(workspace, settings)
+
+
+@router.post("/api/v1/workspace/graphs/{graph_id}/topics/{topic_id}/key-files")
+def add_topic_key_file(
+    graph_id: str,
+    topic_id: str,
+    body: TopicKeyFileInput,
+    repository: GraphRepository = Depends(get_repository),
+    settings: Settings = Depends(get_settings),
+) -> dict:
+    try:
+        graph = repository.graph(graph_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=f"graph {graph_id} not found") from exc
+    cleaned_path = body.path.strip().lstrip("/")
+    try:
+        # Verify the file exists and stays confined inside the bound source folder.
+        MaterialService().read_slice(graph, source_id=body.source_id, path=cleaned_path, start=1, end=1)
+    except MaterialError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    key_file = TopicKeyFile(
+        id=f"kf-{sha1(f'{body.source_id}:{cleaned_path}'.encode('utf-8')).hexdigest()[:12]}",
+        source_id=body.source_id,
+        path=cleaned_path,
+        note=body.note.strip(),
+    )
+    try:
+        workspace = repository.add_topic_key_file(graph_id, topic_id, key_file)
+    except ValueError as exc:
+        message = str(exc)
+        status_code = 404 if "not found" in message else 400
+        raise HTTPException(status_code=status_code, detail=message) from exc
+    return _workspace_config_payload(workspace, settings)
+
+
+@router.delete("/api/v1/workspace/graphs/{graph_id}/topics/{topic_id}/key-files/{key_file_id}")
+def delete_topic_key_file(
+    graph_id: str,
+    topic_id: str,
+    key_file_id: str,
+    repository: GraphRepository = Depends(get_repository),
+    settings: Settings = Depends(get_settings),
+) -> dict:
+    try:
+        workspace = repository.remove_topic_key_file(graph_id, topic_id, key_file_id)
+    except ValueError as exc:
+        message = str(exc)
+        status_code = 404 if "not found" in message else 400
+        raise HTTPException(status_code=status_code, detail=message) from exc
+    return _workspace_config_payload(workspace, settings)
+
+
 @router.post("/api/v1/workspace/graphs/{graph_id}/export")
-def export_workspace_graph(
+async def export_workspace_graph(
     graph_id: str,
     request: GraphExportRequest,
     repository: GraphRepository = Depends(get_repository),
+    runtime=Depends(get_agent_runtime),
 ) -> dict:
     try:
         if request.format == "mapmind_obsidian_export":
@@ -234,6 +346,32 @@ def export_workspace_graph(
                 include_progress=request.include_progress,
                 options=request.obsidian,
             )
+        elif request.format in {"mapmind_study_book_html", "mapmind_study_book_md"}:
+            book_options = request.study_book or StudyBookExportOptions()
+            ai_blindspots = None
+            if book_options.ai_synthesize_blindspots:
+                graph = repository.graph(graph_id)
+                threads = repository.list_graph_chat_threads(graph_id)
+                candidate_payload = collect_study_book_synthesis_inputs(
+                    graph,
+                    threads,
+                    include_progress=request.include_progress,
+                    options=book_options,
+                )
+                if candidate_payload:
+                    ai_blindspots = await runtime.synthesize_study_book_blindspots(
+                        graph_id,
+                        candidate_payload,
+                        request.model,
+                    )
+            package = repository.export_graph_to_study_book(
+                graph_id,
+                title=request.title,
+                include_progress=request.include_progress,
+                book_format="html" if request.format == "mapmind_study_book_html" else "markdown",
+                options=book_options,
+                ai_blindspots_by_topic=ai_blindspots,
+            )
         else:
             package = repository.export_graph_package(
                 graph_id,
@@ -242,6 +380,8 @@ def export_workspace_graph(
             )
     except (ValueError, KeyError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except ChatGPTError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
     return package.model_dump(mode="json")
 
 
@@ -289,12 +429,13 @@ def graph_assessment(
     graph_id: str,
     repository: GraphRepository = Depends(get_repository),
     assessment_service: AssessmentService = Depends(get_assessment_service),
+    locale: AppLocale = Depends(request_locale),
 ) -> dict:
     try:
         graph = repository.graph(graph_id)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=f"graph {graph_id} not found") from exc
-    return assessment_service.assess_graph(graph).model_dump(mode="json")
+    return assessment_service.assess_graph(graph, locale).model_dump(mode="json")
 
 
 @router.get("/api/v1/graph/current")
@@ -415,7 +556,7 @@ def mark_topic_finished(
 
     updated_graph = next(item for item in workspace.workspace.graphs if item.graph_id == graph_id)
     closure_status = quiz_service.build_closure_status(updated_graph, topic_id)
-    attempt = next(item for item in updated_graph.quiz_attempts if item.topic_id == topic_id)
+    attempt = next(item for item in reversed(updated_graph.quiz_attempts) if item.topic_id == topic_id)
     repository.append_event(
         "graph.topic.mark_finished",
         {
@@ -491,6 +632,8 @@ async def rollback_graph(snapshot_id: int, repository: GraphRepository = Depends
 
 from app.api.chat_routes import router as chat_router
 from app.api.chatgpt_routes import router as chatgpt_router
+from app.api.provider_routes import router as provider_router
 
 router.include_router(chat_router)
 router.include_router(chatgpt_router)
+router.include_router(provider_router)

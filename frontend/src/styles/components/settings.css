@@ -239,3 +239,13 @@
   .uiSegmented { grid-auto-flow: row; }
   .stAccount { flex-wrap: wrap; }
 }
+
+.stProviderList { display: flex; flex-direction: column; gap: 8px; }
+.stProviderRow { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 12px; border: 1px solid var(--ui-line); border-radius: 10px; background: var(--ui-fill-1); }
+.stProviderMeta { min-width: 0; flex: 1; }
+.stProviderTitleRow { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.stProviderBadge { font-size: 11px; padding: 1px 7px; border-radius: 999px; border: 1px solid var(--ui-line-strong); color: var(--ui-fg-2); }
+.stProviderBadgeGood { color: var(--ui-good); border-color: var(--ui-good); }
+.stProviderForm { display: flex; flex-direction: column; gap: 10px; padding: 12px; border: 1px solid var(--ui-line); border-radius: 12px; }
+.stProviderActions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.stWebSearchBlock { margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--ui-line); display: flex; flex-direction: column; gap: 10px; }

@@ -2,23 +2,20 @@ import React from "react";
 
 import { X } from "@phosphor-icons/react";
 import { ChatGPTAccountPanel } from "./ChatGPTAccountPanel";
+import { CustomProvidersPanel } from "./CustomProvidersPanel";
+import { LanguageSelect } from "./LanguageSelect";
 import { SectionHead } from "./SettingsSection";
 import { SwitchRow } from "./ui/SwitchRow";
 import type { ChatGPTAccountController } from "../hooks/useChatGPTAccount";
-import { MEMORY_MODE_OPTIONS, type MemoryMode, type SettingsDraftSetters, type SettingsDrafts } from "../lib/appContracts";
+import { MEMORY_MODES, type SettingsDraftSetters, type SettingsDrafts } from "../lib/appContracts";
+import type { LocalePreference } from "../lib/appLocale";
 import type { AppCopy } from "../lib/appCopy";
+import { DEFAULT_CANVAS_STYLE, type CanvasStylePreferences } from "../lib/canvasStyle";
 import type { GraphEnvelope, SnapshotRecord, WorkspaceConfig, WorkspaceEnvelope } from "../lib/types";
 import { useModalAccessibility } from "../lib/useModalAccessibility";
 
 type StateSetter<T> = React.Dispatch<React.SetStateAction<T>>;
-type ModeOption<T extends string> = {
-  id: T;
-  label: string;
-  title: string;
-  description: string;
-};
-
-type SettingsModalProps = {
+type SettingsModalProps = LocalePreference & {
   isSettingsOpen: boolean;
   copy: AppCopy;
   setSettingsOpen: StateSetter<boolean>;
@@ -26,8 +23,6 @@ type SettingsModalProps = {
   drafts: SettingsDrafts;
   setDrafts: SettingsDraftSetters;
   chatgpt: ChatGPTAccountController;
-  activeMemoryOption: ModeOption<MemoryMode>;
-  activeMemoryValues: string;
   activeGraph: GraphEnvelope | null;
   loadSnapshots: () => Promise<void>;
   historyLoading: boolean;
@@ -38,6 +33,10 @@ type SettingsModalProps = {
   configSaving: boolean;
   settingsDirty: boolean;
   saveSettings: () => void;
+  addMaterialSource?: (path: string, label?: string) => Promise<void>;
+  removeMaterialSource?: (sourceId: string) => Promise<void>;
+  canvasStyle?: CanvasStylePreferences;
+  setCanvasStyle?: React.Dispatch<React.SetStateAction<CanvasStylePreferences>>;
 };
 
 export function SettingsModal(props: SettingsModalProps): React.JSX.Element | null {
@@ -49,8 +48,8 @@ export function SettingsModal(props: SettingsModalProps): React.JSX.Element | nu
     drafts,
     setDrafts,
     chatgpt,
-    activeMemoryOption,
-    activeMemoryValues,
+    locale,
+    changeLocale,
     activeGraph,
     loadSnapshots,
     historyLoading,
@@ -61,7 +60,15 @@ export function SettingsModal(props: SettingsModalProps): React.JSX.Element | nu
     configSaving,
     settingsDirty,
     saveSettings,
+    addMaterialSource,
+    removeMaterialSource,
+    canvasStyle,
+    setCanvasStyle,
   } = props;
+  const [materialPathDraft, setMaterialPathDraft] = React.useState("");
+  const [materialLabelDraft, setMaterialLabelDraft] = React.useState("");
+  const [materialBusy, setMaterialBusy] = React.useState(false);
+  const [materialError, setMaterialError] = React.useState<string | null>(null);
   const {
     assistantNickname: assistantNicknameDraft,
     persona: personaDraft,
@@ -104,6 +111,9 @@ export function SettingsModal(props: SettingsModalProps): React.JSX.Element | nu
     return null;
   }
 
+  const activeMemoryOption = copy.settingsPanel.memoryModes[memoryModeDraft];
+  const activeMemoryValues = memoryModeDraft === "custom" ? copy.settingsPanel.customMemory(drafts) : activeMemoryOption.description;
+
   return (
     <div className="stOverlay">
       <div ref={modalRef} className="stModal" role="dialog" aria-modal="true" aria-label={copy.settings.workspaceConfiguration} tabIndex={-1}>
@@ -117,10 +127,12 @@ export function SettingsModal(props: SettingsModalProps): React.JSX.Element | nu
         <div className="stScroll">
           <div className="stGrid">
             <div className="stColumn">
-              <ChatGPTAccountPanel chatgpt={chatgpt} drafts={drafts} setDrafts={setDrafts} />
+              <ChatGPTAccountPanel copy={copy} chatgpt={chatgpt} drafts={drafts} setDrafts={setDrafts} />
+              <CustomProvidersPanel copy={copy} chatgpt={chatgpt} />
 
               <section className="stSection">
-                <SectionHead eyebrow="Preferences" title="Assistant and workspace" />
+                <SectionHead eyebrow={copy.settingsPanel.preferences} title={copy.settingsPanel.assistantAndWorkspace} />
+                <LanguageSelect locale={locale} changeLocale={changeLocale} copy={copy.locale} />
                 <label className="uiField">
                   <span className="uiLabel">{copy.settingsPanel.assistantNickname}</span>
                   <input
@@ -148,28 +160,116 @@ export function SettingsModal(props: SettingsModalProps): React.JSX.Element | nu
                 </div>
               </section>
 
+              {canvasStyle && setCanvasStyle ? (
+                <section className="stSection">
+                  <SectionHead
+                    eyebrow={copy.settingsPanel.canvasStyleEyebrow}
+                    title={copy.settingsPanel.canvasStyleTitle}
+                    action={(
+                      <button
+                        className="uiButton uiButtonQuiet uiButtonSmall"
+                        onClick={() => setCanvasStyle({ ...DEFAULT_CANVAS_STYLE })}
+                        type="button"
+                      >
+                        {copy.settingsPanel.canvasStyleReset}
+                      </button>
+                    )}
+                  />
+                  <div className="canvasStyleSliders">
+                    <label className="canvasStyleSliderRow">
+                      <span className="canvasStyleSliderHead">
+                        <span className="uiLabel">{copy.settingsPanel.canvasFontSize}</span>
+                        <span className="canvasStyleSliderVal">{canvasStyle.labelFontSize}px</span>
+                      </span>
+                      <input
+                        className="canvasStyleRange"
+                        type="range"
+                        min={10}
+                        max={18}
+                        step={1}
+                        value={canvasStyle.labelFontSize}
+                        onChange={(event) => setCanvasStyle((current) => ({ ...current, labelFontSize: Number(event.target.value) }))}
+                      />
+                    </label>
+                    <label className="canvasStyleSliderRow">
+                      <span className="canvasStyleSliderHead">
+                        <span className="uiLabel">{copy.settingsPanel.canvasLabelOpacity}</span>
+                        <span className="canvasStyleSliderVal">{Math.round(canvasStyle.labelOpacity * 100)}%</span>
+                      </span>
+                      <input
+                        className="canvasStyleRange"
+                        type="range"
+                        min={0.3}
+                        max={1}
+                        step={0.05}
+                        value={canvasStyle.labelOpacity}
+                        onChange={(event) => setCanvasStyle((current) => ({ ...current, labelOpacity: Number(event.target.value) }))}
+                      />
+                    </label>
+                    <label className="canvasStyleSliderRow">
+                      <span className="canvasStyleSliderHead">
+                        <span className="uiLabel">{copy.settingsPanel.canvasEdgeOpacity}</span>
+                        <span className="canvasStyleSliderVal">{Math.round(canvasStyle.edgeOpacity * 100)}%</span>
+                      </span>
+                      <input
+                        className="canvasStyleRange"
+                        type="range"
+                        min={0.06}
+                        max={0.65}
+                        step={0.02}
+                        value={canvasStyle.edgeOpacity}
+                        onChange={(event) => setCanvasStyle((current) => ({ ...current, edgeOpacity: Number(event.target.value) }))}
+                      />
+                    </label>
+                    <label className="canvasStyleSliderRow">
+                      <span className="canvasStyleSliderHead">
+                        <span className="uiLabel">{copy.settingsPanel.canvasEdgeWidth}</span>
+                        <span className="canvasStyleSliderVal">{canvasStyle.edgeWidth.toFixed(1)}px</span>
+                      </span>
+                      <input
+                        className="canvasStyleRange"
+                        type="range"
+                        min={0.8}
+                        max={3}
+                        step={0.2}
+                        value={canvasStyle.edgeWidth}
+                        onChange={(event) => setCanvasStyle((current) => ({ ...current, edgeWidth: Number(event.target.value) }))}
+                      />
+                    </label>
+                  </div>
+                  <div className="uiRows">
+                    <SwitchRow
+                      title={copy.settingsPanel.canvasZoneOutlines}
+                      help={copy.settingsPanel.canvasZoneOutlinesHelp}
+                      checked={canvasStyle.showZoneOutlines}
+                      onChange={(checked) => setCanvasStyle((current) => ({ ...current, showZoneOutlines: checked }))}
+                    />
+                  </div>
+                </section>
+              ) : null}
+
               <section className="stSection">
                 <SectionHead eyebrow={copy.settingsPanel.aiBehavior} title={copy.settingsPanel.memory} />
-                <p className="stLead">Clew keeps each conversation. These settings control the fresh graph context and the initial import of an existing chat.</p>
+                <p className="stLead">{copy.settingsPanel.memoryLead}</p>
                 <div className="uiSegmented">
-                  {MEMORY_MODE_OPTIONS.map((option) => (
+                  {MEMORY_MODES.map((id) => (
                     <button
-                      key={option.id}
-                      className={memoryModeDraft === option.id ? "uiSegmentedActive" : undefined}
-                      onClick={() => setMemoryModeDraft(option.id)}
+                      key={id}
+                      className={memoryModeDraft === id ? "uiSegmentedActive" : undefined}
+                      onClick={() => setMemoryModeDraft(id)}
                       type="button"
-                      aria-pressed={memoryModeDraft === option.id}
+                      aria-pressed={memoryModeDraft === id}
                     >
-                      <span>{option.label}</span>
-                      <span>{option.title}</span>
+                      <span>{copy.settingsPanel.memoryModes[id].label}</span>
+                      <span>{copy.settingsPanel.memoryModes[id].title}</span>
                     </button>
                   ))}
                 </div>
-                <p className="uiHelp"><strong>{activeMemoryOption.label}</strong>: {activeMemoryValues}</p>
+                <p className="uiHelp"><strong>{activeMemoryOption.label}</strong> · {activeMemoryValues}</p>
                 {memoryModeDraft === "custom" ? (
                   <>
                     <label className="uiField">
-                      <span className="uiLabel">Messages to import when connecting an existing chat</span>
+                      <span className="uiLabel">{copy.settingsPanel.memoryHistoryLimit}</span>
                       <input
                         className="uiInput stNarrow"
                         type="number"
@@ -191,10 +291,111 @@ export function SettingsModal(props: SettingsModalProps): React.JSX.Element | nu
             </div>
 
             <div className="stColumn">
+              {activeGraph && addMaterialSource && removeMaterialSource ? (
+                <section className="stSection">
+                  <SectionHead
+                    eyebrow={copy.sessions.materialsSectionEyebrow}
+                    title={copy.sessions.materialsSectionTitle}
+                    action={window.clewDesktop?.pickMaterialFolder ? (
+                      <button
+                        className="uiButton uiButtonQuiet uiButtonSmall"
+                        disabled={materialBusy}
+                        onClick={() => {
+                          void (async () => {
+                            const picked = await window.clewDesktop?.pickMaterialFolder?.();
+                            if (picked) {
+                              setMaterialPathDraft(picked);
+                              setMaterialError(null);
+                            }
+                          })();
+                        }}
+                        type="button"
+                      >
+                        {copy.sessions.materialsPickFolder}
+                      </button>
+                    ) : undefined}
+                  />
+                  <p className="stLead">{copy.sessions.materialsHelp}</p>
+                  <label className="uiField">
+                    <input
+                      className="uiInput"
+                      value={materialPathDraft}
+                      onChange={(event) => setMaterialPathDraft(event.target.value)}
+                      placeholder={copy.sessions.materialsPathPlaceholder}
+                    />
+                  </label>
+                  <div className="stFieldPair">
+                    <input
+                      className="uiInput"
+                      value={materialLabelDraft}
+                      onChange={(event) => setMaterialLabelDraft(event.target.value)}
+                      placeholder={copy.sessions.materialsLabelPlaceholder}
+                    />
+                    <button
+                      className="uiButton uiButtonPrimary uiButtonSmall"
+                      disabled={materialBusy || !materialPathDraft.trim()}
+                      onClick={() => {
+                        void (async () => {
+                          setMaterialBusy(true);
+                          setMaterialError(null);
+                          try {
+                            await addMaterialSource(materialPathDraft.trim(), materialLabelDraft.trim() || undefined);
+                            setMaterialPathDraft("");
+                            setMaterialLabelDraft("");
+                          } catch (cause) {
+                            setMaterialError(cause instanceof Error ? cause.message : copy.sessions.materialsAddFailed);
+                          } finally {
+                            setMaterialBusy(false);
+                          }
+                        })();
+                      }}
+                      type="button"
+                    >
+                      {materialBusy ? copy.sessions.materialsAdding : copy.sessions.materialsAdd}
+                    </button>
+                  </div>
+                  {materialError ? <div className="inlineNotice inlineNoticeError">{materialError}</div> : null}
+                  {(activeGraph.material_sources?.length ?? 0) > 0 ? (
+                    <div className="stSnapshots">
+                      {(activeGraph.material_sources ?? []).map((source) => (
+                        <div key={source.id} className="stSnapshot">
+                          <div className="stSnapshotMain">
+                            <div className="stSnapshotTitle">{source.label}</div>
+                            <div className="stSnapshotMeta"><span>{source.path}</span></div>
+                          </div>
+                          <button
+                            className="uiButton uiButtonSmall"
+                            disabled={materialBusy}
+                            onClick={() => {
+                              void (async () => {
+                                setMaterialBusy(true);
+                                setMaterialError(null);
+                                try {
+                                  await removeMaterialSource(source.id);
+                                } catch (cause) {
+                                  setMaterialError(cause instanceof Error ? cause.message : copy.sessions.materialsRemoveFailed);
+                                } finally {
+                                  setMaterialBusy(false);
+                                }
+                              })();
+                            }}
+                            type="button"
+                          >
+                            {copy.sessions.materialsRemove}
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="uiHelp">{copy.sessions.materialsEmpty}</p>
+                  )}
+                </section>
+              ) : null}
+
               {activeGraph ? (
                 <section className="stSection">
                   <SectionHead
-                    eyebrow="History"
+                    eyebrow={copy.settingsPanel.history}
                     title={copy.settingsPanel.snapshots}
                     action={<button className="uiButton uiButtonQuiet uiButtonSmall" onClick={() => void loadSnapshots()} type="button">{historyLoading ? copy.settingsPanel.refreshing : copy.settingsPanel.refresh}</button>}
                   />
@@ -203,13 +404,15 @@ export function SettingsModal(props: SettingsModalProps): React.JSX.Element | nu
                     <div className="stSnapshots">
                       {snapshots.map((snapshot) => {
                         const current = data?.snapshot.id === snapshot.id;
+                        const sources = copy.settingsPanel.snapshotSources;
+                        const source = Object.hasOwn(sources, snapshot.source) ? sources[snapshot.source as keyof typeof sources] : snapshot.source;
                         return (
                           <div key={snapshot.id} className={`stSnapshot${current ? " stSnapshotCurrent" : ""}`}>
                             <div className="stSnapshotMain">
                               <div className="stSnapshotTitle">{copy.settingsPanel.snapshotLabel(snapshot.id)}</div>
                               <div className="stSnapshotMeta">
-                                <span>{snapshot.source}</span>
-                                {snapshot.reason ? <span>{snapshot.reason}</span> : null}
+                                <span>{source}</span>
+                                {snapshot.reason && snapshot.source !== "seed" ? <span>{snapshot.reason}</span> : null}
                               </div>
                             </div>
                             {current ? (
@@ -259,7 +462,7 @@ export function SettingsModal(props: SettingsModalProps): React.JSX.Element | nu
         </div>
 
         <footer className="stFooter">
-          <span className="uiHelp">{settingsDirty ? "Unsaved changes" : "All changes saved"}</span>
+          <span className="uiHelp">{settingsDirty ? copy.settingsPanel.unsaved : copy.settingsPanel.saved}</span>
           <button className="uiButton uiButtonPrimary" disabled={configSaving || !currentConfig || !settingsDirty} onClick={saveSettings} type="button">
             {configSaving ? copy.settingsPanel.saving : copy.settingsPanel.save}
           </button>

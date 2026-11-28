@@ -134,33 +134,123 @@ class ClosureQuizDraft(QuizQuestionSetDraft):
     topic_id: str
 
 
+class DistillationSummaryDraft(ToolInput):
+    topic_id: str | None = Field(default=None, description="Target topic ID in this graph. Defaults to the selected topic.")
+    title: str = Field(min_length=1, max_length=160, description="Concise title for the distilled study note.")
+    body: str = Field(
+        min_length=1,
+        max_length=20000,
+        description="Structured Markdown summary (core takeaways, dedicated personal confusion/correction pairs when confusion or quiz mistakes occurred, and a Further Leads parking lot).",
+    )
+
+
+class DistillationDraft(ToolInput):
+    model_config = {"extra": "forbid"}
+    summary: DistillationSummaryDraft | None = None
+    proposal: ProposalDraft | None = None
+
+    @model_validator(mode="after")
+    def _has_content(self) -> "DistillationDraft":
+        if self.summary is None and self.proposal is None:
+            raise ValueError("Distillation must include a summary, a graph proposal, or both.")
+        if self.proposal is not None and not self.proposal.operations:
+            raise ValueError("Distillation proposal must include at least one operation, or omit proposal when no graph change is needed.")
+        return self
+
+
+class BlindspotPairDraft(ToolInput):
+    misconception: str = Field(min_length=1, max_length=600, description="What the learner got wrong, confused, or hesitated on.")
+    correction: str = Field(min_length=1, max_length=1000, description="Crisp corrective takeaway and rule of thumb.")
+
+
+class TopicBlindspotDraft(ToolInput):
+    topic_id: str = Field(min_length=1)
+    items: list[BlindspotPairDraft] = Field(default_factory=list, max_length=8)
+
+
+class StudyBookSynthesisDraft(ToolInput):
+    model_config = {"extra": "forbid"}
+    topics: list[TopicBlindspotDraft] = Field(default_factory=list)
+
+
+class ListMaterialsDraft(ToolInput):
+    source_id: str | None = Field(default=None, description="Optional bound material source ID. Omit to list across all bound folders.")
+    subpath: str = Field(default="", description="Optional relative subdirectory inside the bound folder.")
+    max_depth: int = Field(default=3, ge=1, le=6)
+
+
+class SearchMaterialsDraft(ToolInput):
+    query: str = Field(min_length=1, max_length=200, description="Case-insensitive keyword, symbol, or phrase to search in bound local code, docs, and PDFs.")
+    source_id: str | None = Field(default=None, description="Optional bound material source ID.")
+    subpath: str = Field(default="", description="Optional relative file or subdirectory to narrow search.")
+
+
+class ReadMaterialDraft(ToolInput):
+    path: str = Field(min_length=1, description="Relative path inside a bound material folder.")
+    source_id: str | None = Field(default=None, description="Optional bound material source ID.")
+    start: int = Field(default=1, ge=1, description="1-based start line (for text/code) or start page (for PDF).")
+    end: int | None = Field(default=None, ge=1, description="Optional 1-based end line (for text/code) or end page (for PDF).")
+
+
+class WebSearchDraft(ToolInput):
+    query: str = Field(min_length=1, max_length=300, description="Search query for up-to-date web information.")
+    max_results: int = Field(default=5, ge=1, le=8)
+
+
 TOOL_MODELS = {
     "propose_ingest": ProposalDraft,
     "propose_expand": ProposalDraft,
+    "propose_distillation": DistillationDraft,
     "ask_question": QuestionDraft,
     "present_quiz": InlineQuizDraft,
     "create_closure_quiz": ClosureQuizDraft,
+    "submit_blindspot_synthesis": StudyBookSynthesisDraft,
+    "list_materials": ListMaterialsDraft,
+    "search_materials": SearchMaterialsDraft,
+    "read_material": ReadMaterialDraft,
+    "web_search": WebSearchDraft,
 }
 
 
+MATERIAL_TOOLS = frozenset({"list_materials", "search_materials", "read_material"})
+WEB_SEARCH_TOOLS = frozenset({"web_search"})
 CLOSURE_QUIZ_TOOLS = frozenset({"read_graph", "read_topic", "create_closure_quiz"})
+BLINDSPOT_SYNTHESIS_TOOLS = frozenset({"submit_blindspot_synthesis"})
 
 
-def tool_specs(only: frozenset[str] | None = None) -> list[dict[str, Any]]:
+def tool_specs(
+    only: frozenset[str] | None = None,
+    *,
+    include_materials: bool = False,
+    include_web_search_tool: bool = False,
+) -> list[dict[str, Any]]:
     """Clew tools as Responses API function tools."""
     descriptions = {
         "propose_ingest": "Submit graph operations that preserve the supplied source material. Clew validates and presents them for user review; this does not apply changes. Omitted descriptive metadata is preserved on existing topics. Read the current graph version first.",
         "propose_expand": "Submit graph operations that extend the learning path toward the user's goal. Clew validates and presents them for user review; this does not apply changes. Omitted descriptive metadata is preserved on existing topics. Read the current graph version first.",
+        "propose_distillation": "Submit a unified conversation distillation card for user review containing an optional structured study summary for the current topic and/or an optional graph proposal (1-3 high-value new topics or link-first edges). Read the current graph version first if proposing graph changes. Does not apply changes.",
         "ask_question": "Show a focused question, optionally with choices and free-text replies. Ends this reply; the learner's answer arrives from Clew in a new turn.",
         "present_quiz": "Show one multiple-choice learning checkpoint with exactly four distinct choices. Ends this reply; Clew sends the server-graded answer in a new turn. Does not award topic completion.",
         "create_closure_quiz": "Register a complete closure quiz for a topic. Supply the requested number of questions with four distinct choices each. Clew checks prerequisites and grades the learner's answers itself.",
+        "submit_blindspot_synthesis": "Submit concise misconception-to-correction pairs synthesized from the learner's quiz mistakes and chat Q&A for each supplied topic.",
+        "list_materials": "List files inside the graph's bound read-only local material folders (code repos, Markdown/TXT docs, PDFs).",
+        "search_materials": "Search for a keyword, symbol, or phrase across the graph's bound local code, docs, and PDFs.",
+        "read_material": "Read a line range from a bound code/text file or a page range from a bound PDF file.",
+        "web_search": "Search the web using the learner's configured search API key for current documentation, facts, or references.",
     }
+    excluded_default = MATERIAL_TOOLS | WEB_SEARCH_TOOLS | BLINDSPOT_SYNTHESIS_TOOLS
+    allowed = set(only) if only is not None else (set(TOOL_MODELS) - excluded_default) | {"read_graph", "read_topic"}
+    if include_materials:
+        allowed |= MATERIAL_TOOLS
+    if include_web_search_tool:
+        allowed |= WEB_SEARCH_TOOLS
     functions = [
         {"type": "function", "name": name, "description": descriptions[name], "parameters": model.model_json_schema(), "strict": False}
         for name, model in TOOL_MODELS.items()
+        if name in allowed
     ]
-    functions.extend([
-        {"type": "function", "name": "read_graph", "description": "Read the current graph, its version, topics, edges, zones and progress. Call again after a conflict; do not guess ids or graph revisions.", "parameters": {"type": "object", "properties": {}, "additionalProperties": False}, "strict": False},
-        {"type": "function", "name": "read_topic", "description": "Read the full content, resources, artifacts and prerequisites of a topic in this conversation's graph.", "parameters": {"type": "object", "properties": {"topic_id": {"type": "string"}}, "required": ["topic_id"], "additionalProperties": False}, "strict": False},
-    ])
-    return [tool for tool in functions if only is None or tool["name"] in only]
+    if "read_graph" in allowed:
+        functions.append({"type": "function", "name": "read_graph", "description": "Read the current graph, its version, topics, edges, zones and progress. Call again after a conflict; do not guess ids or graph revisions.", "parameters": {"type": "object", "properties": {}, "additionalProperties": False}, "strict": False})
+    if "read_topic" in allowed:
+        functions.append({"type": "function", "name": "read_topic", "description": "Read the full content, resources, artifacts and prerequisites of a topic in this conversation's graph.", "parameters": {"type": "object", "properties": {"topic_id": {"type": "string"}}, "required": ["topic_id"], "additionalProperties": False}, "strict": False})
+    return functions

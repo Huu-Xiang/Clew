@@ -1,5 +1,7 @@
 # Clew
 
+[English](README.md) · [简体中文](README.zh-CN.md)
+
 [Try in ChatGPT](https://chatgpt.com/plugins/plugin_asdk_app_6ac57ed8716c8191a3405a8cea2a0d7e) · [Download desktop](https://github.com/miuuyy/Clew/releases/latest) · [Docs](https://clew.my/docs) · [Contributing](CONTRIBUTING.md) · [MIT](LICENSE)
 
 **An AI learning harness built around an interactive knowledge graph.**
@@ -43,9 +45,11 @@ Download the build for your computer from [Releases](https://github.com/miuuyy/C
 
 Open Clew and select **Continue with ChatGPT**. The desktop app requires a ChatGPT **Plus or Pro** plan and permission to use that plan. You do not need Python, Node, an API key, or the Codex CLI installed.
 
+Clew 1.1.0 adds Simplified Chinese alongside English. Choose the interface language on the sign-in screen or under **Settings → Assistant and workspace → Interface language**. New graphs default to the interface language and have their own language setting.
+
 GitHub stars and X follows are optional. They do not unlock features or change access.
 
-The 1.0.0 downloads are not Developer ID notarized or Authenticode signed. macOS builds have an ad-hoc signature. See [installation notes](docs/DESKTOP.md) for platform requirements and data locations.
+macOS downloads use an ad-hoc signature. See [installation notes](docs/DESKTOP.md) for platform requirements, installer signing and data locations.
 
 **Help → Check for Updates** opens the newer release's installer page. Updates are installed manually and retain local data.
 

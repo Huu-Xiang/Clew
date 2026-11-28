@@ -33,6 +33,18 @@ class SessionRequest(BaseModel):
     session_id: str
 
 
+class RevertMessageRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    session_id: str
+    message_id: str = Field(min_length=1)
+
+
+class ApplyDistillationSummaryRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    session_id: str
+    message_id: str = Field(min_length=1)
+
+
 def resolve_thread(runtime, graph_id: str, session_id: str | None = None) -> dict:
     try:
         runtime.repository.graph(graph_id)
@@ -127,3 +139,35 @@ async def interrupt_chat(graph_id: str, body: SessionRequest, runtime=Depends(ge
     except ChatGPTError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     return resolve_thread(runtime, graph_id, body.session_id)
+
+
+@router.post("/api/v1/graphs/{graph_id}/chat/revert")
+async def revert_chat_message(graph_id: str, body: RevertMessageRequest, runtime=Depends(get_agent_runtime)) -> dict:
+    resolve_thread(runtime, graph_id, body.session_id)
+    try:
+        return await runtime.revert_message(graph_id, body.session_id, body.message_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Message not found in this conversation") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except ChatGPTError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@router.post("/api/v1/graphs/{graph_id}/chat/distill/apply-summary")
+def apply_distillation_summary(
+    graph_id: str,
+    body: ApplyDistillationSummaryRequest,
+    runtime=Depends(get_agent_runtime),
+) -> dict:
+    resolve_thread(runtime, graph_id, body.session_id)
+    try:
+        workspace, message = runtime.repository.apply_distillation_summary(graph_id, body.session_id, body.message_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Message not found in this conversation") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {
+        "workspace": workspace.model_dump(mode="json"),
+        "message": message.model_dump(mode="json"),
+    }

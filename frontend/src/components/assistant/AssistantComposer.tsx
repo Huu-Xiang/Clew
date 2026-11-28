@@ -1,4 +1,5 @@
 import React from "react";
+import { Quotes, X } from "@phosphor-icons/react";
 import type { AgentControls } from "./AgentInteraction";
 
 import type { GraphChatState } from "../../lib/appContracts";
@@ -41,11 +42,33 @@ export function AssistantComposer({
 }: AssistantComposerProps): React.JSX.Element {
   return (
     <div className="assistantComposerWrap">
-      {chatError ? <div className="inlineNotice inlineNoticeError" role="alert">{chatError}<button className="composerInlineAction" type="button" onClick={agentControls.reconnect}>Reconnect</button></div> : null}
-      {!agentControls.authenticated ? <div className="chatgptChatConnect"><span>Sign in with ChatGPT to start learning.</span><button className="composerInlineAction" type="button" onClick={agentControls.connect}>Sign in</button></div> : null}
-      {chatSessionsError ? <div className="inlineNotice inlineNoticeError">{chatSessionsError}</div> : null}
+      {chatError ? <div className="inlineNotice inlineNoticeError" role="alert">{copy.errors.request(copy.sessions.chatFailed, chatError)}<button className="composerInlineAction" type="button" onClick={agentControls.reconnect}>{copy.sessions.reconnect}</button></div> : null}
+      {!agentControls.authenticated ? <div className="chatgptChatConnect"><span>{copy.account.signInToLearn}</span><button className="composerInlineAction" type="button" onClick={agentControls.connect}>{copy.account.shortSignIn}</button></div> : null}
+      {chatSessionsError ? <div className="inlineNotice inlineNoticeError">{copy.errors.request(copy.errors.loadChatSessions, chatSessionsError)}</div> : null}
       {applyError ? <div className="inlineNotice inlineNoticeError">{applyError}</div> : null}
       <div className="assistantTemplates">
+        {agentControls.distillConversation ? (
+          <button
+            className="assistantTemplate assistantTemplateDistill"
+            disabled={chatLoading || chatThreadLoading || !agentControls.authenticated || currentChatState.messages.every((message) => message.hidden)}
+            onClick={() => void agentControls.distillConversation?.()}
+            title={copy.sessions.distillTitle}
+            type="button"
+          >
+            {copy.sessions.distillButton}
+          </button>
+        ) : null}
+        {agentControls.distillBlindspots ? (
+          <button
+            className="assistantTemplate assistantTemplateDistill"
+            disabled={chatLoading || chatThreadLoading || !agentControls.authenticated}
+            onClick={() => void agentControls.distillBlindspots?.()}
+            title={copy.sessions.distillBlindspotsTitle}
+            type="button"
+          >
+            {copy.sessions.distillBlindspotsButton}
+          </button>
+        ) : null}
         {assistantTemplates.map((template) => (
           <button
             key={template.id}
@@ -63,6 +86,26 @@ export function AssistantComposer({
           </button>
         ))}
       </div>
+      {currentChatState.quotedText ? (
+        <div className="composerQuoteBar">
+          <div className="composerQuoteContent">
+            <div className="composerQuoteLabel">
+              <Quotes size={12} weight="bold" aria-hidden="true" />
+              <span>{copy.sessions.quotedLabel}</span>
+            </div>
+            <div className="composerQuoteText">{currentChatState.quotedText}</div>
+          </div>
+          <button
+            className="composerQuoteClear"
+            onClick={() => updateCurrentChatState((current) => ({ ...current, quotedText: null }))}
+            aria-label={copy.sessions.clearQuote}
+            title={copy.sessions.clearQuote}
+            type="button"
+          >
+            <X size={12} weight="bold" aria-hidden="true" />
+          </button>
+        </div>
+      ) : null}
       <div className="assistantComposer">
         <textarea
           ref={chatComposerRef}
@@ -86,8 +129,8 @@ export function AssistantComposer({
           className="composerSendButton"
           disabled={chatThreadLoading || (!chatLoading && (!currentChatState.input.trim() || !agentControls.authenticated))}
           onClick={() => chatLoading ? void agentControls.stop() : sendChat()}
-          aria-label={chatLoading ? "Stop reply" : "Send message"}
-          title={chatLoading ? "Stop reply" : "Send message"}
+          aria-label={chatLoading ? copy.sessions.stopReply : copy.sessions.sendMessage}
+          title={chatLoading ? copy.sessions.stopReply : copy.sessions.sendMessage}
           type="button"
         >
           {chatLoading ? (

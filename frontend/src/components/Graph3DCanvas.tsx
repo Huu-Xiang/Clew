@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef } from "react";
+import type { AppCopy } from "../lib/appCopy";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { EffectComposer } from "three/examples/jsm/postprocessing/EffectComposer.js";
@@ -44,22 +45,61 @@ function plainLabel(value: string): string {
     .trim();
 }
 
-function createLabelVisual(text: string, themeMode: GraphCanvasThemeMode, accent = false): LabelVisual {
+function createLabelVisual(
+  text: string,
+  themeMode: GraphCanvasThemeMode,
+  untitled: string,
+  accent = false,
+  dotColor?: string,
+): LabelVisual {
   const canvas = document.createElement("canvas");
   const context = canvas.getContext("2d")!;
-  const label = plainLabel(text).slice(0, 76) || "Untitled";
-  const fontSize = accent ? 27 : 23;
-  context.font = `${accent ? 650 : 520} ${fontSize}px Manrope, Inter, sans-serif`;
+  const letters = Array.from(plainLabel(text) || untitled);
+  const fontSize = accent ? 28 : 24;
+  context.font = `${accent ? 700 : 600} ${fontSize}px -apple-system, BlinkMacSystemFont, "PingFang SC", "Noto Sans SC", Inter, sans-serif`;
+  const prefix = letters.slice(0, 42);
+  let label = prefix.join("") + (prefix.length < letters.length ? "…" : "");
+  while (context.measureText(label).width > 540 && prefix.length) {
+    prefix.pop();
+    label = prefix.join("") + "…";
+  }
   const measuredWidth = Math.ceil(context.measureText(label).width);
-  canvas.width = Math.min(640, Math.max(128, measuredWidth + 36));
-  canvas.height = accent ? 58 : 52;
-  context.font = `${accent ? 650 : 520} ${fontSize}px Manrope, Inter, sans-serif`;
+  const padX = dotColor ? 48 : 34;
+  canvas.width = Math.min(640, Math.max(140, measuredWidth + padX));
+  canvas.height = accent ? 62 : 54;
+
+  // High-contrast rounded pill background so labels stay crisp over fog & edges
+  const radius = canvas.height / 2;
+  context.beginPath();
+  if (typeof context.roundRect === "function") {
+    context.roundRect(2, 2, canvas.width - 4, canvas.height - 4, radius - 2);
+  } else {
+    context.rect(2, 2, canvas.width - 4, canvas.height - 4);
+  }
+  context.fillStyle = themeMode === "dark"
+    ? (accent ? "rgba(28, 34, 40, 0.94)" : "rgba(18, 22, 27, 0.90)")
+    : (accent ? "rgba(255, 250, 243, 0.97)" : "rgba(255, 253, 249, 0.94)");
+  context.fill();
+  context.lineWidth = accent ? 2.5 : 1.75;
+  context.strokeStyle = themeMode === "dark"
+    ? (accent ? "rgba(255, 255, 255, 0.34)" : "rgba(255, 255, 255, 0.22)")
+    : (accent ? "rgba(62, 53, 44, 0.36)" : "rgba(62, 53, 44, 0.24)");
+  context.stroke();
+
+  if (dotColor) {
+    context.beginPath();
+    context.arc(22, canvas.height / 2, 6, 0, Math.PI * 2);
+    context.fillStyle = dotColor;
+    context.fill();
+  }
+
+  context.font = `${accent ? 700 : 600} ${fontSize}px -apple-system, BlinkMacSystemFont, "PingFang SC", "Noto Sans SC", Inter, sans-serif`;
   context.textAlign = "center";
   context.textBaseline = "middle";
-  context.fillStyle = themeMode === "dark"
-    ? (accent ? "rgba(255,255,255,0.96)" : "rgba(255,255,255,0.78)")
-    : (accent ? "rgba(45,43,40,0.96)" : "rgba(45,43,40,0.78)");
-  context.fillText(label, canvas.width / 2, canvas.height / 2);
+  context.fillStyle = themeMode === "dark" ? "#f4f6f8" : "#1d1b18";
+  const textCenterX = dotColor ? canvas.width / 2 + 8 : canvas.width / 2;
+  context.fillText(label, textCenterX, canvas.height / 2 + 0.5);
+
   const texture = new THREE.CanvasTexture(canvas);
   texture.colorSpace = THREE.SRGBColorSpace;
   texture.minFilter = THREE.LinearFilter;
@@ -67,10 +107,10 @@ function createLabelVisual(text: string, themeMode: GraphCanvasThemeMode, accent
     map: texture,
     transparent: true,
     depthWrite: false,
-    opacity: accent ? 0.64 : 0.34,
+    opacity: accent ? 0.95 : 0.92,
   });
   const sprite = new THREE.Sprite(material);
-  const width = Math.min(58, Math.max(18, canvas.width / 10));
+  const width = Math.min(72, Math.max(24, canvas.width / 8.8));
   sprite.scale.set(width, width * (canvas.height / canvas.width), 1);
   return { sprite, material };
 }
@@ -208,7 +248,7 @@ function createZoneMaterial(
   return new THREE.ShaderMaterial({
     uniforms: {
       uColor: { value: color },
-      uOpacity: { value: themeMode === "dark" ? 0.026 : 0.12 },
+      uOpacity: { value: themeMode === "dark" ? 0.018 : 0.032 },
       uLightTheme: { value: themeMode === "light" ? 1 : 0 },
       uCameraLocal: { value: new THREE.Vector3() },
       uScale: { value: cloud.scale.clone() },
@@ -296,7 +336,7 @@ function createZoneMaterial(
           accumulatedAlpha += (1.0 - accumulatedAlpha) * sampleAlpha;
           accumulatedDensity += density * stepLength;
           previousDensity = density;
-          if (accumulatedAlpha > 0.52) break;
+          if (accumulatedAlpha > 0.16) break;
           point += rayDirection * stepLength;
         }
         if (accumulatedAlpha < 0.004) discard;
@@ -380,6 +420,14 @@ function projectedAnchor(position: THREE.Vector3, state: SceneVisuals): TopicAnc
   return { x, y, side: x > width * 0.56 ? "left" : "right" };
 }
 
+function topicColor3D(topic: Topic, active: boolean, selected: boolean, themeMode: GraphCanvasThemeMode): THREE.Color {
+  if (selected) return new THREE.Color(themeMode === "dark" ? 0xff8b60 : 0xc85a32);
+  if (topic.state === "solid" || topic.state === "mastered") return new THREE.Color(themeMode === "dark" ? 0x5cb882 : 0x3f7d58);
+  if (topic.state === "shaky" || topic.state === "needs_review") return new THREE.Color(themeMode === "dark" ? 0xe6a243 : 0xb87324);
+  if (active) return new THREE.Color(themeMode === "dark" ? 0xeff1f2 : 0x4b433c);
+  return new THREE.Color(themeMode === "dark" ? 0x8b969c : 0x766b60);
+}
+
 function applyAppearance(args: {
   state: SceneVisuals;
   topics: Topic[];
@@ -393,25 +441,29 @@ function applyAppearance(args: {
   themeMode: GraphCanvasThemeMode;
 }): void {
   const { state, topics, zones, selectedTopicId, rootIds, pathNodeIds, pathEdgeIds, frontierEdgeIds, themeMode } = args;
+  const topicZoneMap = new Map<string, string>();
+  for (const zone of zones) {
+    for (const tid of zone.topic_ids) {
+      if (!topicZoneMap.has(tid)) topicZoneMap.set(tid, zone.id);
+    }
+  }
   const matrix = new THREE.Matrix4();
   topics.forEach((topic, index) => {
     const position = state.positions.get(topic.id)!;
     const selected = topic.id === selectedTopicId;
     const onPath = pathNodeIds.has(topic.id);
-    const scale = selected ? 1.62 : onPath ? 1.24 : rootIds.has(topic.id) ? 1.12 : 1;
+    const scale = selected ? 1.65 : onPath ? 1.28 : rootIds.has(topic.id) ? 1.16 : 1.05;
     matrix.compose(position, new THREE.Quaternion(), new THREE.Vector3(scale, scale, scale));
     state.nodeMesh.setMatrixAt(index, matrix);
     const active = selected || onPath;
-    const nodeColor = themeMode === "dark"
-      ? new THREE.Color(active ? 0xeff1f2 : 0x5e6468)
-      : new THREE.Color(active ? 0x6f665e : 0xb3a99e);
-    state.nodeMesh.setColorAt(index, nodeColor);
+    state.nodeMesh.setColorAt(index, topicColor3D(topic, active, selected, themeMode));
     const label = state.labels.get(topic.id);
     if (label) {
-      label.material.opacity = selected ? 1 : onPath ? 0.9 : rootIds.has(topic.id) ? 0.82 : (themeMode === "dark" ? 0.64 : 0.52);
+      const dimmed = Boolean(selectedTopicId && !selected && !onPath);
+      label.material.opacity = selected ? 1 : onPath ? 0.98 : dimmed ? 0.56 : 0.92;
       const baseWidth = Number(label.sprite.userData.baseWidth ?? label.sprite.scale.x);
       const baseHeight = Number(label.sprite.userData.baseHeight ?? label.sprite.scale.y);
-      const labelScale = selected ? 1.22 : onPath ? 1.08 : 1;
+      const labelScale = selected ? 1.18 : onPath ? 1.06 : 1;
       label.sprite.scale.set(baseWidth * labelScale, baseHeight * labelScale, 1);
     }
   });
@@ -419,21 +471,30 @@ function applyAppearance(args: {
   if (state.nodeMesh.instanceColor) state.nodeMesh.instanceColor.needsUpdate = true;
 
   for (const [topicId, material] of state.rootRings) {
-    material.opacity = topicId === selectedTopicId ? 0 : 0.22;
+    material.opacity = topicId === selectedTopicId ? 0 : 0.34;
   }
   const selectedPosition = selectedTopicId ? state.positions.get(selectedTopicId) : null;
   state.selectedRing.visible = Boolean(selectedPosition);
   if (selectedPosition) state.selectedRing.position.copy(selectedPosition);
-  state.selectedRingMaterial.opacity = selectedPosition ? 0.92 : 0;
+  state.selectedRingMaterial.opacity = selectedPosition ? 0.95 : 0;
 
   const colors = state.edgeColorAttribute.array as Float32Array;
-  const baseColor = themeMode === "dark" ? new THREE.Color(0x5e6468) : new THREE.Color(0xb3a99e);
+  const intraColor = themeMode === "dark" ? new THREE.Color(0x889399) : new THREE.Color(0x6e645b);
+  const crossDimColor = themeMode === "dark" ? new THREE.Color(0x3a4146) : new THREE.Color(0xcbc2b7);
   const pathColor = themeMode === "dark"
     ? new THREE.Color().setRGB(1.35, 1.38, 1.4)
-    : new THREE.Color(0x6f665e);
+    : new THREE.Color(0xc85a32);
   const frontierColor = new THREE.Color(themeMode === "dark" ? 0xd8c071 : 0xa97f25);
   for (const record of state.edgeRecords) {
-    const color = pathEdgeIds.has(record.edge.id) ? pathColor : frontierEdgeIds.has(record.edge.id) ? frontierColor : baseColor;
+    const isIncident = Boolean(selectedTopicId && (record.edge.source_topic_id === selectedTopicId || record.edge.target_topic_id === selectedTopicId));
+    const sameZone = topicZoneMap.get(record.edge.source_topic_id) === topicZoneMap.get(record.edge.target_topic_id);
+    const color = pathEdgeIds.has(record.edge.id) || isIncident
+      ? pathColor
+      : frontierEdgeIds.has(record.edge.id)
+        ? frontierColor
+        : sameZone
+          ? intraColor
+          : crossDimColor;
     colors.set([color.r, color.g, color.b, color.r, color.g, color.b], record.colorOffset);
   }
   state.edgeColorAttribute.needsUpdate = true;
@@ -446,14 +507,14 @@ function applyAppearance(args: {
   for (const [zoneId, visual] of state.zoneVisuals) {
     const highlighted = selectedZoneIds.has(zoneId);
     visual.material.uniforms["uOpacity"].value = highlighted
-      ? (themeMode === "dark" ? 0.06 : 0.23)
-      : (themeMode === "dark" ? 0.026 : 0.12);
-    visual.label.material.opacity = highlighted ? 0.58 : (selectedTopicId ? 0.1 : 0.18);
+      ? (themeMode === "dark" ? 0.036 : 0.065)
+      : (themeMode === "dark" ? 0.018 : 0.032);
+    visual.label.material.opacity = highlighted ? 1 : (selectedTopicId ? 0.62 : 0.94);
   }
-
 }
 
 export function Graph3DCanvas({
+  copy,
   topics,
   edges,
   zones,
@@ -466,6 +527,7 @@ export function Graph3DCanvas({
   onSelectedTopicAnchorChange,
   themeMode,
 }: {
+  copy: AppCopy["graphStats"];
   topics: Topic[];
   edges: Edge[];
   zones: Zone[];
@@ -501,9 +563,9 @@ export function Graph3DCanvas({
 
     const scene = new THREE.Scene();
     const highDensityGraph = topics.length >= 160;
-    const background = themeMode === "dark" ? new THREE.Color(0x000000) : new THREE.Color(0xf7f7f4);
+    const background = themeMode === "dark" ? new THREE.Color(0x0b0e11) : new THREE.Color(0xf7f5f0);
     scene.background = background;
-    scene.fog = new THREE.FogExp2(background, themeMode === "dark" ? 0.00108 : 0.00085);
+    scene.fog = new THREE.FogExp2(background, themeMode === "dark" ? 0.00032 : 0.00022);
 
     const camera = new THREE.PerspectiveCamera(50, 1, 0.1, 10000);
     const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
@@ -511,15 +573,15 @@ export function Graph3DCanvas({
     renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, highDensityGraph ? 1.32 : 1.8));
     renderer.outputColorSpace = THREE.SRGBColorSpace;
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    renderer.toneMappingExposure = themeMode === "dark" ? 1.18 : 0.94;
+    renderer.toneMappingExposure = themeMode === "dark" ? 1.12 : 0.98;
     mount.appendChild(renderer.domElement);
 
     const composer = new EffectComposer(renderer);
     composer.addPass(new RenderPass(scene, camera));
     const bloomPass = new UnrealBloomPass(
       new THREE.Vector2(1, 1),
-      themeMode === "dark" ? 0.72 : 0.18,
-      0.48,
+      themeMode === "dark" ? 0.36 : 0.06,
+      0.42,
       1.05,
     );
     composer.addPass(bloomPass);
@@ -533,16 +595,16 @@ export function Graph3DCanvas({
     controls.zoomSpeed = 0.82;
     controls.zoomToCursor = true;
     controls.screenSpacePanning = true;
-    controls.enablePan = false;
+    controls.enablePan = true;
     controls.minDistance = 18;
     controls.maxDistance = Math.max(1600, layout.radius * 10);
 
     const positions = new Map([...layout.positions].map(([id, point]) => [id, graphPointToVector(point)]));
     const center = graphPointToVector(layout.center);
     const fitView = (): void => {
-      const fitDistance = Math.max(180, layout.radius / Math.tan(THREE.MathUtils.degToRad(camera.fov * 0.5)) * 1.08);
+      const fitDistance = Math.max(190, layout.radius / Math.tan(THREE.MathUtils.degToRad(camera.fov * 0.5)) * 1.12);
       controls.target.copy(center);
-      camera.position.copy(center).add(new THREE.Vector3(0.72, 0.42, 1).normalize().multiplyScalar(fitDistance));
+      camera.position.copy(center).add(new THREE.Vector3(0.78, 0.54, 1).normalize().multiplyScalar(fitDistance));
       camera.near = Math.max(0.1, fitDistance / 1000);
       camera.far = Math.max(4000, fitDistance * 12);
       camera.updateProjectionMatrix();
@@ -574,6 +636,32 @@ export function Graph3DCanvas({
     });
     scene.add(spatialGrid);
 
+    // Subtle horizontal terrace rings anchoring each prerequisite tier elevation
+    if (layout.tierElevations.length > 1) {
+      const terracePositions: number[] = [];
+      const ringRadius = Math.max(140, layout.radius * 1.08);
+      const segments = 64;
+      for (const y of layout.tierElevations) {
+        for (let s = 0; s < segments; s += 1) {
+          const a1 = (s / segments) * Math.PI * 2;
+          const a2 = ((s + 1) / segments) * Math.PI * 2;
+          terracePositions.push(
+            center.x + Math.cos(a1) * ringRadius, y, center.z + Math.sin(a1) * ringRadius,
+            center.x + Math.cos(a2) * ringRadius, y, center.z + Math.sin(a2) * ringRadius,
+          );
+        }
+      }
+      const terraceGeo = new THREE.BufferGeometry();
+      terraceGeo.setAttribute("position", new THREE.Float32BufferAttribute(terracePositions, 3));
+      const terraceMat = new THREE.LineBasicMaterial({
+        color: themeMode === "dark" ? 0x4b555a : 0xc5bab0,
+        transparent: true,
+        opacity: themeMode === "dark" ? 0.22 : 0.35,
+        depthWrite: false,
+      });
+      scene.add(new THREE.LineSegments(terraceGeo, terraceMat));
+    }
+
     const volumeNoiseTexture = createVolumeNoiseTexture();
     const zoneVisuals = new Map<string, ZoneVisual>();
     for (const zone of zones) {
@@ -595,9 +683,10 @@ export function Graph3DCanvas({
       scene.add(mesh);
       const memberPositions = zone.topic_ids.map((topicId) => positions.get(topicId)).filter((point): point is THREE.Vector3 => Boolean(point));
       const zoneCenter = memberPositions.reduce((sum, point) => sum.add(point), new THREE.Vector3()).multiplyScalar(1 / memberPositions.length);
-      const label = createLabelVisual(zone.title, themeMode, true);
-      label.sprite.position.copy(zoneCenter).add(new THREE.Vector3(0, Math.min(...cloud.envelopeRadii.toArray()) * 0.24, 0));
-      label.material.opacity = 0.3;
+      const maxZoneY = memberPositions.reduce((m, p) => Math.max(m, p.y), zoneCenter.y);
+      const label = createLabelVisual(zone.title, themeMode, copy.untitled, true, zone.color || undefined);
+      label.sprite.position.set(zoneCenter.x, maxZoneY + 22, zoneCenter.z);
+      label.material.opacity = 0.94;
       label.sprite.renderOrder = 3;
       scene.add(label.sprite);
       zoneVisuals.set(zone.id, { mesh, material, label, topicIds: new Set(zone.topic_ids) });
@@ -643,10 +732,16 @@ export function Graph3DCanvas({
         })
         .map((topic, index) => [topic.id, index]),
     );
+    const topicZoneColor = new Map<string, string>();
+    for (const zone of zones) {
+      for (const tid of zone.topic_ids) {
+        if (zone.color && !topicZoneColor.has(tid)) topicZoneColor.set(tid, zone.color);
+      }
+    }
     topics.forEach((topic) => {
       const position = positions.get(topic.id)!;
-      const label = createLabelVisual(topic.title, themeMode);
-      label.sprite.position.copy(position).add(new THREE.Vector3(0, 7.2, 0));
+      const label = createLabelVisual(topic.title, themeMode, copy.untitled, false, topicZoneColor.get(topic.id));
+      label.sprite.position.copy(position).add(new THREE.Vector3(0, 8.6, 0));
       label.sprite.userData.baseWidth = label.sprite.scale.x;
       label.sprite.userData.baseHeight = label.sprite.scale.y;
       label.sprite.userData.lodRank = labelRankById.get(topic.id) ?? topics.length;
@@ -909,7 +1004,7 @@ export function Graph3DCanvas({
       sceneRef.current = null;
       onSelectedTopicAnchorChangeRef.current(null);
     };
-  }, [layout, themeMode, topics, edges, zones, rootSignature]);
+  }, [layout, themeMode, topics, edges, zones, rootSignature, copy.untitled]);
 
   useEffect(() => {
     const state = sceneRef.current;
@@ -920,12 +1015,12 @@ export function Graph3DCanvas({
   }, [edges, frontierEdgeIds, onSelectedTopicAnchorChange, pathEdgeIds, pathNodeIds, rootIds, selectedTopicId, themeMode, topics, zones]);
 
   return (
-    <div ref={containerRef} className="graph3dSurface" tabIndex={0} aria-label="Interactive 3D knowledge graph">
+    <div ref={containerRef} className="graph3dSurface" tabIndex={0} aria-label={copy.interactive3d}>
       <div ref={mountRef} className="graph3dMount" />
       <div ref={hoverRef} className="graph3dHoverLabel" hidden />
       <div className="graph3dNavigationHint">
-        <span>Hold RMB to look · WASD to fly · Q/E vertical · Shift to boost</span>
-        <button type="button" onClick={() => resetViewRef.current()}>Reset view</button>
+        <span>{copy.navigation3d}</span>
+        <button type="button" onClick={() => resetViewRef.current()}>{copy.resetView}</button>
       </div>
     </div>
   );

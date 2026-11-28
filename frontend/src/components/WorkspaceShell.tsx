@@ -20,11 +20,14 @@ import {
 import { readErrorMessage, type apiFetch } from "../lib/apiRequest";
 import { renderDisplayText, safeExternalUrl, type ManualLayoutPositions, type PopoverPosition } from "../lib/appUiHelpers";
 import type { AppCopy } from "../lib/appCopy";
-import { formatMinutes, formatTopicState, getTopicStateTone } from "../lib/graph";
+import type { CanvasStylePreferences } from "../lib/canvasStyle";
+import type { TreeLayoutDirection } from "../lib/treeLayout";
+import { formatMinutes, getTopicStateTone } from "../lib/graph";
 import { useModalAccessibility } from "../lib/useModalAccessibility";
 import { GraphCanvas } from "./GraphCanvas";
 import type { TopicAnchorPoint } from "./GraphCanvas";
 import { AssistantModelMenuTrigger, LightChatWindow, LightWorkspaceWindow, TopicAssetModal } from "./WorkspaceShellAuxWindows";
+import { TopicKeyFilesSection } from "./TopicKeyFilesSection";
 import { AssistantComposer } from "./assistant/AssistantComposer";
 import { AssistantSessionList } from "./assistant/AssistantSessionList";
 import { AssistantThread } from "./assistant/AssistantThread";
@@ -137,6 +140,7 @@ type WorkspaceChromeProps = {
   viewportCenteredZoom: boolean;
   setViewportCenteredZoom: StateSetter<boolean>;
   straightEdgeLinesEnabled: boolean;
+  canvasStyle?: CanvasStylePreferences;
   topOverlayCompact: boolean;
   overlayLeftOffset: number;
   overlayRightOffset: number;
@@ -163,6 +167,11 @@ type GraphWorkspaceProps = {
   graphLayoutSaving: boolean;
   saveGraphLayout: () => Promise<void>;
   startGraphLayoutEdit: () => void;
+  arrangeTreeLayout?: (direction: TreeLayoutDirection) => Promise<void>;
+  collapsedZoneIds?: Set<string>;
+  toggleCollapseZone?: (zoneId: string) => void;
+  allZonesCollapsed?: boolean;
+  toggleCollapseAllZones?: () => void;
   setGraphLayoutEditing: StateSetter<boolean>;
   setGraphLayoutDraft: StateSetter<ManualLayoutPositions | null>;
   graphShellRef: React.RefObject<HTMLDivElement | null>;
@@ -197,6 +206,11 @@ type TopicDetailsProps = {
   quizLoading: boolean;
   startQuiz: () => Promise<void>;
   markTopicFinished: () => Promise<void>;
+  distillAfterQuiz?: () => Promise<void>;
+  distillBlindspots?: () => Promise<void>;
+  reviewQuizMistakes?: (missed: import("../lib/types").QuizQuestionReview[]) => Promise<void>;
+  addTopicKeyFile?: (topicId: string, sourceId: string, path: string, note?: string) => Promise<void>;
+  removeTopicKeyFile?: (topicId: string, keyFileId: string) => Promise<void>;
 };
 
 type AssistantWorkspaceProps = {
@@ -291,6 +305,7 @@ export function WorkspaceShell(props: WorkspaceShellProps): React.JSX.Element {
     viewportCenteredZoom,
     setViewportCenteredZoom,
     straightEdgeLinesEnabled,
+    canvasStyle,
     topOverlayCompact,
     overlayLeftOffset,
     overlayRightOffset,
@@ -315,6 +330,11 @@ export function WorkspaceShell(props: WorkspaceShellProps): React.JSX.Element {
     graphLayoutSaving,
     saveGraphLayout,
     startGraphLayoutEdit,
+    arrangeTreeLayout,
+    collapsedZoneIds,
+    toggleCollapseZone,
+    allZonesCollapsed,
+    toggleCollapseAllZones,
     setGraphLayoutEditing,
     setGraphLayoutDraft,
     graphShellRef,
@@ -681,7 +701,7 @@ export function WorkspaceShell(props: WorkspaceShellProps): React.JSX.Element {
   const generalSession = chatSessions.find((session) => !session.topic_id) ?? null;
   const topicSessions = chatSessions.filter((session) => Boolean(session.topic_id));
   const visibleMessages = currentChatState.messages.filter((message) => !message.hidden);
-  const pathTitles = focusData.pathLayers.flat().map((entry) => entry.title);
+  const pathEntries = focusData.pathLayers.flat();
   const selectedTopicClosed = selectedTopic?.state === "solid" || selectedTopic?.state === "mastered";
   const topicPopoverConnector = React.useMemo(() => {
     if (graphViewMode !== "3d" || !selectedTopic || !selectedTopicAnchor || !popoverPosition || isMobileViewport) return null;
@@ -756,7 +776,7 @@ export function WorkspaceShell(props: WorkspaceShellProps): React.JSX.Element {
       if (topicAssetDialog.kind === "resource") {
         const safeUrl = safeExternalUrl(topicResourceUrlDraft);
         if (!safeUrl) {
-          throw new Error("A valid link is required.");
+          throw new Error(copy.errors.validLink);
         }
         await addTopicResource(topicAssetDialog.topicId, safeUrl);
       } else {
@@ -1022,7 +1042,7 @@ export function WorkspaceShell(props: WorkspaceShellProps): React.JSX.Element {
           </button>
           <a
             className="sidebarAccountTrigger sidebarAccountLink"
-            href="https://clew.my/docs"
+            href={copy.locale.docsUrl}
             target="_blank"
             rel="noreferrer"
           >
@@ -1122,6 +1142,9 @@ export function WorkspaceShell(props: WorkspaceShellProps): React.JSX.Element {
           setViewportCenteredZoom={setViewportCenteredZoom}
           saveGraphLayout={saveGraphLayout}
           startGraphLayoutEdit={startGraphLayoutEdit}
+          arrangeTreeLayout={arrangeTreeLayout}
+          allZonesCollapsed={allZonesCollapsed}
+          toggleCollapseAllZones={toggleCollapseAllZones}
           setGraphLayoutEditing={setGraphLayoutEditing}
           setGraphLayoutDraft={setGraphLayoutDraft}
           graphViewMode={graphViewMode}
@@ -1155,6 +1178,9 @@ export function WorkspaceShell(props: WorkspaceShellProps): React.JSX.Element {
           setViewportCenteredZoom={setViewportCenteredZoom}
           saveGraphLayout={saveGraphLayout}
           startGraphLayoutEdit={startGraphLayoutEdit}
+          arrangeTreeLayout={arrangeTreeLayout}
+          allZonesCollapsed={allZonesCollapsed}
+          toggleCollapseAllZones={toggleCollapseAllZones}
           setGraphLayoutEditing={setGraphLayoutEditing}
           setGraphLayoutDraft={setGraphLayoutDraft}
           graphViewMode={graphViewMode}
@@ -1188,6 +1214,9 @@ export function WorkspaceShell(props: WorkspaceShellProps): React.JSX.Element {
           setViewportCenteredZoom={setViewportCenteredZoom}
           saveGraphLayout={saveGraphLayout}
           startGraphLayoutEdit={startGraphLayoutEdit}
+          arrangeTreeLayout={arrangeTreeLayout}
+          allZonesCollapsed={allZonesCollapsed}
+          toggleCollapseAllZones={toggleCollapseAllZones}
           setGraphLayoutEditing={setGraphLayoutEditing}
           setGraphLayoutDraft={setGraphLayoutDraft}
           graphViewMode={graphViewMode}
@@ -1211,8 +1240,9 @@ export function WorkspaceShell(props: WorkspaceShellProps): React.JSX.Element {
                   </button>
                 ) : null}
                 {activeGraph && graphViewMode === "3d" ? (
-                  <React.Suspense fallback={<div className="graph3dLoading">Preparing 3D space…</div>}>
+                  <React.Suspense fallback={<div className="graph3dLoading">{copy.graphStats.loading3d}</div>}>
                     <Graph3DCanvas
+                      copy={copy.graphStats}
                       key={`graph-3d:${activeGraph.graph_id}`}
                       topics={activeGraph.topics}
                       edges={activeGraph.edges}
@@ -1249,6 +1279,9 @@ export function WorkspaceShell(props: WorkspaceShellProps): React.JSX.Element {
                     disableIdleAnimations={liveDisableIdleAnimations}
                     viewportCenteredWheelZoom={viewportCenteredZoom}
                     curvedEdgeLinesEnabled={!straightEdgeLinesEnabled}
+                    canvasStyle={canvasStyle}
+                    collapsedZoneIds={collapsedZoneIds}
+                    onToggleCollapseZone={toggleCollapseZone}
                     themeMode={themeMode}
                     backgroundFill={graphCanvasBackgroundFill}
                   />
@@ -1346,7 +1379,7 @@ export function WorkspaceShell(props: WorkspaceShellProps): React.JSX.Element {
                     </div>
                     <div className="topicPopoverTitle">{selectedTopic.title}</div>
                     <div className="topicPopoverMeta">
-                      <span className={`topicPopoverState topicPopoverState-${getTopicStateTone(selectedTopic.state)}`}>{formatTopicState(selectedTopic.state)}</span>
+                      <span className={`topicPopoverState topicPopoverState-${getTopicStateTone(selectedTopic.state)}`}>{copy.topic.states[selectedTopic.state]}</span>
                       <span className="topicPopoverMetaItem">{formatMinutes(selectedTopic.estimated_minutes, copy)}</span>
                       {selectedZoneLabel ? <span className="topicPopoverMetaItem">{selectedZoneLabel}</span> : null}
                     </div>
@@ -1356,9 +1389,23 @@ export function WorkspaceShell(props: WorkspaceShellProps): React.JSX.Element {
                     <div className="topicPopoverSection">
                       <div className="topicPopoverLabel">{copy.topic.foundationPath}</div>
                       <div className="topicPopoverPath">
-                        {(pathTitles.length > 0 ? pathTitles : [selectedTopic.title]).map((title, index, all) => (
-                          <span key={`${title}-${index}`} className={index === all.length - 1 ? "topicPopoverPathCurrent" : undefined}>{title}</span>
-                        ))}
+                        {(pathEntries.length > 0 ? pathEntries : [{ id: selectedTopic.id, title: selectedTopic.title }]).map((entry, index, all) => {
+                          const isCurrent = index === all.length - 1 || entry.id === selectedTopic.id;
+                          return isCurrent ? (
+                            <span key={`${entry.id}-${index}`} className="topicPopoverPathCurrent">{entry.title}</span>
+                          ) : (
+                            <span key={`${entry.id}-${index}`}>
+                              <button
+                                className="topicPopoverJumpLink"
+                                onPointerDown={(event) => event.stopPropagation()}
+                                onClick={() => handleSelectTopic(entry.id, null)}
+                                type="button"
+                              >
+                                {entry.title}
+                              </button>
+                            </span>
+                          );
+                        })}
                       </div>
                     </div>
                     <div className="topicPopoverSection">
@@ -1390,6 +1437,15 @@ export function WorkspaceShell(props: WorkspaceShellProps): React.JSX.Element {
                         <div className="topicPopoverEmpty">{copy.topic.noResources}</div>
                       )}
                     </div>
+                    {(activeGraph?.material_sources?.length ?? 0) > 0 && topicDetails.addTopicKeyFile && topicDetails.removeTopicKeyFile ? (
+                      <TopicKeyFilesSection
+                        copy={copy}
+                        topic={selectedTopic}
+                        materialSources={activeGraph?.material_sources ?? []}
+                        addTopicKeyFile={topicDetails.addTopicKeyFile}
+                        removeTopicKeyFile={topicDetails.removeTopicKeyFile}
+                      />
+                    ) : null}
                     <div className="topicPopoverSection">
                       <div className="topicPopoverSectionHeader">
                         <div className="topicPopoverLabel">{copy.topic.artifacts}</div>
@@ -1438,28 +1494,105 @@ export function WorkspaceShell(props: WorkspaceShellProps): React.JSX.Element {
                         ) : (
                           <div className="topicPopoverCopy">
                             {copy.closure.blockedBy}{" "}
-                            {selectedClosureStatus.blocked_prerequisite_ids
-                              .map((topicId) => topicTitlesById.get(topicId) ?? topicId)
-                              .join(" · ")}
+                            {selectedClosureStatus.blocked_prerequisite_ids.map((topicId, index) => (
+                              <React.Fragment key={topicId}>
+                                {index > 0 ? " · " : null}
+                                <button
+                                  className="topicPopoverJumpLink"
+                                  onPointerDown={(event) => event.stopPropagation()}
+                                  onClick={() => handleSelectTopic(topicId, null)}
+                                  type="button"
+                                >
+                                  {topicTitlesById.get(topicId) ?? topicId}
+                                </button>
+                              </React.Fragment>
+                            ))}
                           </div>
                         )}
                         {quizError ? <div className="topicPopoverNotice topicPopoverNoticeBad">{quizError}</div> : null}
-                        {quizSuccess ? <div className="topicPopoverNotice">{quizSuccess}</div> : null}
-                        {!(selectedTopicClosed && !closureTestsEnabled) ? (
-                          <button
-                            className="topicPopoverPrimary"
-                            disabled={quizLoading || (closureTestsEnabled && !selectedClosureStatus.can_award_completion)}
-                            onClick={() => void (closureTestsEnabled ? startQuiz() : markTopicFinished())}
-                            type="button"
-                            title={closureTestsEnabled && !selectedClosureStatus.can_award_completion ? copy.closure.closePrerequisitesFirst : undefined}
-                          >
-                            {quizLoading
-                              ? (closureTestsEnabled ? copy.closure.generatingQuiz : copy.closure.markingAsFinished)
-                              : closureTestsEnabled && !selectedClosureStatus.can_award_completion
-                                ? copy.closure.closePrerequisitesFirst
-                                : (closureTestsEnabled ? copy.closure.startClosureQuiz : copy.closure.markAsFinished)}
-                          </button>
+                        {quizSuccess ? (
+                          <div className="topicPopoverNotice">
+                            <div>{quizSuccess}</div>
+                            {topicDetails.distillAfterQuiz && agentControls.authenticated ? (
+                              <button
+                                className="topicPopoverDistillBtn"
+                                disabled={chatLoading}
+                                onClick={() => void topicDetails.distillAfterQuiz?.()}
+                                type="button"
+                              >
+                                {copy.sessions.distillAfterQuiz}
+                              </button>
+                            ) : null}
+                          </div>
                         ) : null}
+                        {selectedClosureStatus.latest_attempt?.missed_reviews?.length ? (
+                          <details className="topicPopoverMistakes">
+                            <summary className="topicPopoverMistakesSummary">
+                              {copy.closure.recentMistakes(selectedClosureStatus.latest_attempt.missed_reviews.length)}
+                            </summary>
+                            <ul className="topicPopoverMistakesList">
+                              {selectedClosureStatus.latest_attempt.missed_reviews.map((item) => (
+                                <li key={item.question_id} className="topicPopoverMistakeItem">
+                                  <div className="topicPopoverMistakePrompt">{renderDisplayText(item.prompt)}</div>
+                                  {item.selected_choice ? (
+                                    <div className="topicPopoverMistakeWrong">{renderDisplayText(copy.quiz.yourAnswer(item.selected_choice))}</div>
+                                  ) : null}
+                                  <div className="topicPopoverMistakeRight">{renderDisplayText(copy.quiz.correctAnswer(item.correct_choice))}</div>
+                                  {item.explanation ? (
+                                    <div className="topicPopoverMistakeExp">{renderDisplayText(item.explanation)}</div>
+                                  ) : null}
+                                </li>
+                              ))}
+                            </ul>
+                            {topicDetails.reviewQuizMistakes && agentControls.authenticated ? (
+                              <button
+                                className="topicPopoverDistillBtn"
+                                disabled={chatLoading}
+                                onClick={() => void topicDetails.reviewQuizMistakes?.(selectedClosureStatus.latest_attempt!.missed_reviews!)}
+                                type="button"
+                              >
+                                {copy.closure.reviewMistakesWithAi}
+                              </button>
+                            ) : null}
+                            {topicDetails.distillBlindspots && agentControls.authenticated ? (
+                              <button
+                                className="topicPopoverDistillBtn"
+                                disabled={chatLoading}
+                                onClick={() => void topicDetails.distillBlindspots?.()}
+                                type="button"
+                              >
+                                {copy.sessions.distillBlindspotsButton}
+                              </button>
+                            ) : null}
+                          </details>
+                        ) : null}
+                        <div className="topicPopoverActions">
+                          {!(selectedTopicClosed && !closureTestsEnabled) ? (
+                            <button
+                              className="topicPopoverPrimary"
+                              disabled={quizLoading || (closureTestsEnabled && !selectedClosureStatus.can_award_completion)}
+                              onClick={() => void (closureTestsEnabled ? startQuiz() : markTopicFinished())}
+                              type="button"
+                              title={closureTestsEnabled && !selectedClosureStatus.can_award_completion ? copy.closure.closePrerequisitesFirst : undefined}
+                            >
+                              {quizLoading
+                                ? (closureTestsEnabled ? copy.closure.generatingQuiz : copy.closure.markingAsFinished)
+                                : closureTestsEnabled && !selectedClosureStatus.can_award_completion
+                                  ? copy.closure.closePrerequisitesFirst
+                                  : (closureTestsEnabled ? copy.closure.startClosureQuiz : copy.closure.markAsFinished)}
+                            </button>
+                          ) : null}
+                          {closureTestsEnabled && !selectedTopicClosed ? (
+                            <button
+                              className="topicPopoverSkipBtn"
+                              disabled={quizLoading}
+                              onClick={() => void markTopicFinished()}
+                              type="button"
+                            >
+                              {quizLoading ? copy.closure.markingAsFinished : copy.closure.skipTopic}
+                            </button>
+                          ) : null}
+                        </div>
                       </div>
                     ) : null}
                   </div>
@@ -1580,7 +1713,7 @@ export function WorkspaceShell(props: WorkspaceShellProps): React.JSX.Element {
                 <button className={`lightDockButton ${isSettingsOpen ? "lightDockButtonActive" : ""}`} onClick={openConfigurationSettings} title={copy.shell.configuration} type="button">
                   <GearSix size={21} weight={getDockIconWeight(isSettingsOpen)} />
                 </button>
-                <a className="lightDockButton lightDockButtonLink" href="https://clew.my/docs" rel="noreferrer" target="_blank" title={copy.sidebar.documentation}>
+                <a className="lightDockButton lightDockButtonLink" href={copy.locale.docsUrl} rel="noreferrer" target="_blank" title={copy.sidebar.documentation}>
                   <BookBookmark size={21} weight={getDockIconWeight(false)} />
                 </a>
                 {debugModeEnabled ? (

@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Clew Ideation: Repository &amp; Material Grounding (Milvus 源码/资料学习)</title>
+<style>
+  :root {
+    --bg: #faf9f6; --surface: #ffffff; --surface-2: #f4f1ea;
+    --fg: #24221f; --fg-2: #5c574f; --fg-3: #8c857b;
+    --line: #e6e1d6; --accent: #c86442; --accent-soft: #faeae4;
+    --good: #2d7a4f; --good-soft: #e6f4ec; --warn: #9a6700; --warn-soft: #fdf3dc;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Segoe UI", sans-serif; background: var(--bg); color: var(--fg); line-height: 1.65; }
+  .wrap { max-width: 980px; margin: 0 auto; padding: 36px 24px 72px; }
+  header { border-bottom: 1px solid var(--line); padding-bottom: 20px; margin-bottom: 28px; }
+  .eyebrow { font-size: 12px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--accent); }
+  h1 { margin: 6px 0 10px; font-size: 28px; line-height: 1.25; letter-spacing: -0.02em; }
+  .meta { display: flex; flex-wrap: wrap; gap: 8px 16px; font-size: 13px; color: var(--fg-2); }
+  .section-title { font-size: 18px; font-weight: 700; margin: 32px 0 14px; letter-spacing: -0.01em; }
+  .box { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 18px 20px; margin-bottom: 16px; }
+  .axes { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 12px; }
+  .axis { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; }
+  .axis strong { display: block; font-size: 14px; margin-bottom: 4px; }
+  .axis span { font-size: 13px; color: var(--fg-2); }
+  .idea { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 20px 22px; margin-bottom: 16px; }
+  .idea.top { border-color: var(--accent); box-shadow: 0 4px 18px rgba(200,100,66,0.08); }
+  .idea-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 10px; margin-bottom: 10px; }
+  .idea-title { font-size: 17px; font-weight: 700; }
+  .rank { display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; border-radius: 999px; background: var(--accent-soft); color: var(--accent); font-size: 13px; font-weight: 700; margin-right: 8px; }
+  .badges { display: flex; flex-wrap: wrap; gap: 6px; }
+  .badge { font-size: 12px; font-weight: 600; padding: 2px 9px; border-radius: 999px; background: var(--surface-2); color: var(--fg-2); }
+  .badge.high { background: var(--good-soft); color: var(--good); }
+  .badge.med { background: var(--warn-soft); color: var(--warn); }
+  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 12px; }
+  @media (max-width: 700px) { .grid-2 { grid-template-columns: 1fr; } }
+  .kv { background: var(--surface-2); border-radius: 10px; padding: 10px 12px; font-size: 13px; }
+  .kv b { display: block; font-size: 12px; color: var(--fg-2); margin-bottom: 3px; }
+  code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px; background: var(--surface-2); padding: 1px 5px; border-radius: 4px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
+  th, td { padding: 10px 12px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
+  th { background: var(--surface-2); font-weight: 600; color: var(--fg-2); }
+  tr:last-child td { border-bottom: 0; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="eyebrow">CE Ideation · Clew Codebase Grounded</div>
+    <h1>让 Clew 支持源码库与学习资料（以研读 Milvus 源码为例）</h1>
+    <div class="meta">
+      <span>日期：2026-11-26</span>
+      <span>候选：14 个原始创意 → 淘汰 8 个 → 留存 6 个</span>
+      <span>覆盖维度：4 / 4 轴</span>
+    </div>
+  </header>
+
+  <div class="box">
+    <strong>现状基线（代码实证）</strong>
+    <ul style="margin:8px 0 0;padding-left:18px;font-size:14px;color:var(--fg-2);">
+      <li><code>backend/app/models/domain.py:30</code>：主题的 <code>ResourceLink</code> 目前只是书签 URL，AI 不会抓取、不会索引，也不能挂本地源码目录或 PDF。</li>
+      <li><code>backend/app/agent/runtime.py:253</code>：对话只挂了 OpenAI 的 <code>web_search</code>（只能搜公开网页），<code>context.py:36</code> 明确禁止模型读取本地文件系统。</li>
+      <li><code>backend/app/mcp_server/server.py</code>：Clew 目前只是只读 MCP Server（给外部工具读图谱），本身还不能连接 DeepWiki MCP 等外部资料源。</li>
+      <li>外部成熟实践（2025–2026）：DeepWiki / DeepWiki MCP、基于 Tree-sitter/AST 的本地代码知识图谱（CPG）、以及 Graph-Anchored RAG（把知识点直接锚定到 <code>file:line</code>）。</li>
+    </ul>
+  </div>
+
+  <div class="section-title">主题拆解维度（4 Axes）</div>
+  <div class="axes">
+    <div class="axis"><strong>1. 资料挂载与只读探索</strong><span>图谱/主题如何绑定本地代码库或文档，让 AI 安全只读检索。</span></div>
+    <div class="axis"><strong>2. 仓库一键生成学习图谱</strong><span>把大型源码库（如 Milvus）转成按依赖分层的学习路线图。</span></div>
+    <div class="axis"><strong>3. 源码锚定教学与测验</strong><span>讲解、笔记、结业测验全部引用真实 <code>file:line</code> 与代码片段。</span></div>
+    <div class="axis"><strong>4. 外部生态桥接</strong><span>复用 DeepWiki MCP / 本地编码 Agent，而非重造一个 IDE。</span></div>
+  </div>
+
+  <div class="section-title">留存排序方案（Top 6 Survivors）</div>
+
+  <div class="idea top">
+    <div class="idea-head">
+      <div class="idea-title"><span class="rank">1</span>图谱绑定只读「本地源码库 / 资料目录」+ 沙箱只读工具套件</div>
+      <div class="badges"><span class="badge">Axis 1: 资料挂载与只读探索</span><span class="badge high">Conf: High</span><span class="badge">Cx: M</span></div>
+    </div>
+    <p>允许每个图谱绑定 1 个或多个只读资料源（本地 Git 仓库目录如 <code>~/Dev/milvus</code>，或 Markdown/PDF 资料文件夹），同时给 Clew Agent 新增 3 个严格只读、路径限制在绑定根目录内的原生工具：<code>list_source_tree</code>、<code>search_source</code>（ripgrep/关键词/符号搜索）、<code>read_source_slice</code>（按行号片段读取）。</p>
+    <div class="grid-2">
+      <div class="kv"><b>依据 (Basis)</b><code>direct:</code> Clew 已有成熟的 Responses API 原生工具循环（<code>tools.py</code>），新增只读工具零破坏架构，且完全保留“不静默改图谱”的铁律。</div>
+      <div class="kv"><b>取舍 (Tradeoffs)</b>最直接解决“聊 Milvus 时 AI 瞎编源码”的痛点，且不依赖向量库；缺点是需要本地先 <code>git clone</code> 或放好资料目录。</div>
+    </div>
+  </div>
+
+  <div class="idea">
+    <div class="idea-head">
+      <div class="idea-title"><span class="rank">2</span>主题级「源码锚点（Code Anchors）」与基于真实代码的结业测验</div>
+      <div class="badges"><span class="badge">Axis 3: 源码锚定教学与测验</span><span class="badge high">Conf: High</span><span class="badge">Cx: M</span></div>
+    </div>
+    <p>把主题的 <code>ResourceLink</code> 扩展出 <code>code_anchor</code> 类型（如 <code>internal/querynodev2/segments/segment.go:120-210</code> + 函数/结构体名）。点击主题弹窗可直接预览代码片段；发起<strong>结业测验（Closure Quiz）</strong>时，后端自动把该主题锚定的真实源码切片塞进出题上下文，出的题直接考真实调用链和边界条件（例如“为什么 Milvus 这里要用 RLock 而不是 Lock”），不再是泛泛八股文。</p>
+    <div class="grid-2">
+      <div class="kv"><b>依据 (Basis)</b><code>direct:</code> <code>runtime.py:153</code> 的 <code>generate_closure_quiz</code> 已经支持只读工具，把 <code>read_source_slice</code> 开放给测验生成轮次即可闭环；<code>external:</code> KG-RAG 实证表明锚定源码能大幅降低教学幻觉。</div>
+      <div class="kv"><b>取舍 (Tradeoffs)</b>让 Clew 从“通用 AI 问答”质变为“真正能验收源码理解度的学习工具”；缺点是源码版本更新后行号可能漂移（可通过符号名辅助定位缓解）。</div>
+    </div>
+  </div>
+
+  <div class="idea">
+    <div class="idea-head">
+      <div class="idea-title"><span class="rank">3</span>仓库架构扫描 → 一键提案「分层源码研读图谱」（Repo-to-Graph Bootstrap）</div>
+      <div class="badges"><span class="badge">Axis 2: 仓库一键生成学习图谱</span><span class="badge high">Conf: High</span><span class="badge">Cx: M</span></div>
+    </div>
+    <p>新建图谱时新增「从代码库导入（Import from Codebase）」入口：本地确定性脚本先扫描目录树、<code>go.mod</code>/<code>package.json</code>、README、核心包依赖（轻量化 AST/import 图），把精炼的仓库骨架交给模型，通过现有 <code>propose_ingest</code> 生成按「入口层 → 核心协调层（RootCoord/DataCoord/QueryCoord）→ 存储引擎（Knowhere/Segment）」分 Zone 且带先修边的学习图谱提案，每个节点自动带上关键文件路径。</p>
+    <div class="grid-2">
+      <div class="kv"><b>依据 (Basis)</b><code>direct:</code> 复用现有 Obsidian 导入弹窗与 <code>propose_ingest</code> 审阅流；<code>external:</code> 参考 DeepWiki / CodeGraph 先抽确定性结构再让 LLM 归纳的范式，token 消耗可控。</div>
+      <div class="kv"><b>取舍 (Tradeoffs)</b>彻底解决“面对几十万行 Milvus 不知道从哪读起”的冷启动难题；缺点是不同语言（Go/C++/Python/Rust）的 import 解析需要循序覆盖。</div>
+    </div>
+  </div>
+
+  <div class="idea">
+    <div class="idea-head">
+      <div class="idea-title"><span class="rank">4</span>接入 DeepWiki MCP / 外部 MCP 客户端：免克隆直接读 GitHub 开源大库</div>
+      <div class="badges"><span class="badge">Axis 4: 外部生态桥接</span><span class="badge med">Conf: Med</span><span class="badge">Cx: M</span></div>
+    </div>
+    <p>让 Clew 后端作为一个轻量 MCP Client，优先支持免配置的 <strong>DeepWiki MCP</strong>（输入 <code>milvus-io/milvus</code> 即可查架构文档、提问、拿源码引用）以及用户自定义本地 MCP（如 Context7、本地知识库）。无需在本地 clone 几个 GB 的源码，就能在 Clew 里直接建图谱、学源码。</p>
+    <div class="grid-2">
+      <div class="kv"><b>依据 (Basis)</b><code>external:</code> DeepWiki 已预索引 50,000+ 开源库并提供官方 MCP 接口；<code>direct:</code> Clew 后端依赖里已有 <code>mcp</code> Python SDK（<code>backend/app/mcp_server/server.py:20</code>）。</div>
+      <div class="kv"><b>取舍 (Tradeoffs)</b>对开源公开库零门槛、极低成本；缺点是不支持私有仓库或你本地魔改过的分支，适合与方案 1 互补。</div>
+    </div>
+  </div>
+
+  <div class="idea">
+    <div class="idea-head">
+      <div class="idea-title"><span class="rank">5</span>「执行链路追踪模式（Trace-to-Path）」：沿着一条请求链长出学习子图</div>
+      <div class="badges"><span class="badge">Axis 2: 仓库一键生成学习图谱</span><span class="badge med">Conf: Med</span><span class="badge">Cx: M</span></div>
+    </div>
+    <p>读 Milvus 这类分布式系统，按目录学容易迷失，真正有效的是按<strong>一条真实请求链路</strong>（如「一次 Vector Search 请求如何从 Proxy → QueryCoord → QueryNode → Knowhere 返回」）。用户给一个入口函数或场景，AI 通过只读代码搜索一路追踪调用链，把沿途关键模块抽成一条线性/分支子图提案（用 <code>requires / bridges</code> 串联），顺手把每一步的核心代码行记进节点。</p>
+    <div class="grid-2">
+      <div class="kv"><b>依据 (Basis)</b><code>reasoned:</code> 分布式系统源码研读的核心心智模型是数据流/控制流而非静态文件夹树；<code>direct:</code> 完美复用 Clew 现有的 <code>propose_expand</code> 和方向边可视化。</div>
+      <div class="kv"><b>取舍 (Tradeoffs)</b>学习体验极爽、直击面试与架构理解核心；缺点是强依赖方案 1 的只读代码搜索精度。</div>
+    </div>
+  </div>
+
+  <div class="idea">
+    <div class="idea-head">
+      <div class="idea-title"><span class="rank">6</span>通用「本地资料库（PDF / 论文 / 网页快照）」分块索引与引用</div>
+      <div class="badges"><span class="badge">Axis 1: 资料挂载与只读探索</span><span class="badge med">Conf: Med</span><span class="badge">Cx: L</span></div>
+    </div>
+    <p>在代码库之外，允许把 PDF 论文（如 Milvus SIGMOD 论文、HNSW 论文）、设计文档 Markdown 拖入图谱资料夹；本地轻量抽取文本与章节标题（SQLite FTS5 全文索引，无需重型向量库），AI 对话和提炼总结时用 <code>search_materials</code> 检索段落并附带页码/章节引用。</p>
+    <div class="grid-2">
+      <div class="kv"><b>依据 (Basis)</b><code>direct:</code> Clew 已自带 SQLite，内置 FTS5 即可实现零外部依赖的精准关键词/章节检索，符合本地优先定位。</div>
+      <div class="kv"><b>取舍 (Tradeoffs)</b>把 Clew 从“源码学习”泛化到“论文/教材/源码混合学习”；缺点是 PDF 版面解析（公式/表格）边角情况较多，适合作为第二阶段。</div>
+    </div>
+  </div>
+
+  <div class="section-title">淘汰清单与理由（Rejected Candidates — 8 Cut）</div>
+  <table>
+    <thead><tr><th style="width:28%;">被淘汰想法</th><th style="width:72%;">淘汰原因</th></tr></thead>
+    <tbody>
+      <tr><td>内置完整向量数据库做全库 Embedding RAG</td><td><code>too expensive / heavy</code>：在桌面端内嵌 Milvus/Chroma + 向量化管线维护成本极高，且对代码结构（调用链/符号）检索效果反不如 ripgrep + AST/FTS5。</td></tr>
+      <tr><td>把 Clew 改造成带代码编辑器的 AI IDE</td><td><code>subject-replacement</code>：违背 Clew 核心定位（graph-first learning workspace），重造 VS Code/Cursor 毫无优势。</td></tr>
+      <tr><td>全自动把仓库里每个函数都生成一个图谱节点</td><td><code>not actionable / graph explosion</code>：Milvus 有数万个函数，1:1 映射会让 2D/3D 图谱彻底炸裂且失去“可测验学习单元”的意义。</td></tr>
+      <tr><td>直接开放不受限的 Shell 命令给模型执行</td><td><code>unsafe / violates Clew boundary</code>：违背 <code>context.py:36</code> 的安全与显式契约边界，只读沙箱工具已能覆盖 95% 源码阅读需求。</td></tr>
+      <tr><td>把整本 PDF 或整个目录原文直接塞进 System Prompt</td><td><code>unscalable</code>：大仓库/多篇论文必然超上下文上限并暴涨 ChatGPT 额度消耗。</td></tr>
+      <tr><td>仅支持手动把代码复制到聊天框</td><td><code>already covered / below ambition floor</code>：现在本来就能复制粘贴，没有解决“主动认识仓库和资料”的核心痛点。</td></tr>
+      <tr><td>只做 GitHub URL 网页抓取（无 API/MCP）</td><td><code>fragile</code>：GitHub 页面限流且大库目录深，稳定性远不如本地只读挂载（方案 1）或 DeepWiki MCP（方案 4）。</td></tr>
+      <tr><td>自动监控 git commit 实时重写整个学习图谱</td><td><code>violates invariant</code>：静默变更图谱违背 Clew 铁律，且频繁改动会打断学习节奏。</td></tr>
+    </tbody>
+  </table>
+</div>
+</body>
+</html>

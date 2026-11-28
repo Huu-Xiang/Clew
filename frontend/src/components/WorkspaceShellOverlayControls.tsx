@@ -2,6 +2,7 @@ import React from "react";
 import { Cube, Graph, LockSimple, LockSimpleOpen, Moon, PencilSimple, SunDim, X } from "@phosphor-icons/react";
 
 import type { AppCopy } from "../lib/appCopy";
+import type { TreeLayoutDirection } from "../lib/treeLayout";
 import type { GraphAssessment, WorkspaceEnvelope, GraphEnvelope } from "../lib/types";
 
 type GraphSummary = {
@@ -52,7 +53,7 @@ export function GraphStatItems({
   return (
     <>
       <div className="statStrip">
-        {activeGraph ? <span className="statSeg statSegLang">{activeGraph.language.toUpperCase()}</span> : null}
+        {activeGraph ? <span className="statSeg statSegLang" title={copy.dialogs.languageOptions[activeGraph.language]}>{activeGraph.language.toUpperCase()}</span> : null}
         <span className="statSeg">
           <strong>{graphSummary.topicCount}</strong>
           <span className="statSegLabel">{copy.graphStats.topics}</span>
@@ -86,6 +87,9 @@ export function OverlayControls({
   graphLayoutEditing,
   saveGraphLayout,
   startGraphLayoutEdit,
+  arrangeTreeLayout,
+  allZonesCollapsed,
+  toggleCollapseAllZones,
   graphLayoutSaving,
   copy,
   setGraphLayoutEditing,
@@ -101,6 +105,9 @@ export function OverlayControls({
   graphLayoutEditing: boolean;
   saveGraphLayout: () => Promise<void>;
   startGraphLayoutEdit: () => void;
+  arrangeTreeLayout?: (direction: TreeLayoutDirection) => Promise<void>;
+  allZonesCollapsed?: boolean;
+  toggleCollapseAllZones?: () => void;
   graphLayoutSaving: boolean;
   copy: AppCopy;
   setGraphLayoutEditing: React.Dispatch<React.SetStateAction<boolean>>;
@@ -133,8 +140,8 @@ export function OverlayControls({
             setGraphViewMode((current) => current === "2d" ? "3d" : "2d");
           }}
           type="button"
-          title={graphViewMode === "2d" ? "Switch to 3D graph" : "Switch to 2D graph"}
-          aria-label={graphViewMode === "2d" ? "Switch to 3D graph" : "Switch to 2D graph"}
+          title={graphViewMode === "2d" ? copy.graphStats.view3d : copy.graphStats.view2d}
+          aria-label={graphViewMode === "2d" ? copy.graphStats.view3d : copy.graphStats.view2d}
           aria-pressed={graphViewMode === "3d"}
         >
           {graphViewMode === "2d" ? <Cube size={15} weight="bold" /> : <Graph size={15} weight="bold" />}
@@ -151,6 +158,42 @@ export function OverlayControls({
         >
           {viewportCenteredZoom ? <LockSimple size={15} weight="bold" /> : <LockSimpleOpen size={15} weight="bold" />}
         </button>
+      ) : null}
+      {activeGraph && graphViewMode === "2d" && !graphLayoutEditing && toggleCollapseAllZones && activeGraph.zones.length > 0 ? (
+        <button
+          className={`floatingStatusButton floatingStatusButtonText ${allZonesCollapsed ? "floatingStatusButtonActive" : ""}`}
+          onClick={toggleCollapseAllZones}
+          type="button"
+          title={allZonesCollapsed ? copy.graphStats.expandAllZonesTitle : copy.graphStats.collapseAllZonesTitle}
+          aria-label={allZonesCollapsed ? copy.graphStats.expandAllZonesTitle : copy.graphStats.collapseAllZonesTitle}
+          aria-pressed={Boolean(allZonesCollapsed)}
+        >
+          {allZonesCollapsed ? copy.graphStats.expandAllZones : copy.graphStats.collapseAllZones}
+        </button>
+      ) : null}
+      {activeGraph && graphViewMode === "2d" && !graphLayoutEditing && arrangeTreeLayout ? (
+        <>
+          <button
+            className="floatingStatusButton floatingStatusButtonText"
+            onClick={() => void arrangeTreeLayout("vertical")}
+            type="button"
+            disabled={graphLayoutSaving || activeGraph.topics.length === 0}
+            title={copy.graphStats.arrangeVerticalTreeTitle}
+            aria-label={copy.graphStats.arrangeVerticalTreeTitle}
+          >
+            {copy.graphStats.arrangeVerticalTree}
+          </button>
+          <button
+            className="floatingStatusButton floatingStatusButtonText"
+            onClick={() => void arrangeTreeLayout("horizontal")}
+            type="button"
+            disabled={graphLayoutSaving || activeGraph.topics.length === 0}
+            title={copy.graphStats.arrangeHorizontalTreeTitle}
+            aria-label={copy.graphStats.arrangeHorizontalTreeTitle}
+          >
+            {copy.graphStats.arrangeHorizontalTree}
+          </button>
+        </>
       ) : null}
       {activeGraph && graphViewMode === "2d" ? (
         <button

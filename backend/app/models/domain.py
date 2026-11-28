@@ -9,9 +9,9 @@ from pydantic import BaseModel, Field, model_validator
 
 TopicState = Literal["not_started", "learning", "shaky", "solid", "mastered", "needs_review"]
 EdgeRelation = Literal["requires", "supports", "bridges", "extends", "reviews"]
-GraphLanguage = Literal["en", "uk", "ru"]
+GraphLanguage = Literal["en", "uk", "ru", "zh-CN"]
 ReasoningEffort = Literal["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"]
-ChatAction = Literal["answer", "propose_ingest", "propose_expand"]
+ChatAction = Literal["answer", "propose_ingest", "propose_expand", "propose_distillation"]
 MemoryMode = Literal["balanced", "max", "custom"]
 OperationType = Literal[
     "upsert_topic",
@@ -84,6 +84,15 @@ LEGACY_COMPACT_MEMORY_PRESET: dict[str, int | bool] = {
 }
 
 
+class QuizQuestionReview(BaseModel):
+    question_id: str
+    prompt: str
+    selected_choice: str | None = None
+    correct_choice: str
+    was_correct: bool
+    explanation: str = ""
+
+
 class QuizAttempt(BaseModel):
     id: str
     topic_id: str
@@ -93,6 +102,8 @@ class QuizAttempt(BaseModel):
     closure_awarded: bool = False
     created_at: datetime = Field(default_factory=utc_now)
     missed_questions: list[str] = Field(default_factory=list)
+    missed_reviews: list[QuizQuestionReview] = Field(default_factory=list)
+    asked_prompts: list[str] = Field(default_factory=list)
     fail_count: int = 0
 
 
@@ -150,15 +161,6 @@ class TopicQuizSessionPublic(BaseModel):
     generator: str = "heuristic"
 
 
-class QuizQuestionReview(BaseModel):
-    question_id: str
-    prompt: str
-    selected_choice: str | None = None
-    correct_choice: str
-    was_correct: bool
-    explanation: str = ""
-
-
 class QuizStartRequest(BaseModel):
     question_count: int | None = Field(default=None, ge=6, le=12)
     model: str | None = Field(default=None, min_length=1)
@@ -181,6 +183,19 @@ class QuizSubmitResponse(BaseModel):
     workspace: "WorkspaceEnvelope"
 
 
+class MaterialSource(BaseModel):
+    id: str
+    label: str
+    path: str
+
+
+class TopicKeyFile(BaseModel):
+    id: str
+    source_id: str
+    path: str
+    note: str = ""
+
+
 class Topic(BaseModel):
     id: str
     title: str
@@ -193,6 +208,7 @@ class Topic(BaseModel):
     zones: list[str] = Field(default_factory=list)
     resources: list[ResourceLink] = Field(default_factory=list)
     artifacts: list[Artifact] = Field(default_factory=list)
+    key_files: list[TopicKeyFile] = Field(default_factory=list)
     quiz_policy: QuizPolicy = Field(default_factory=QuizPolicy)
     metadata: dict[str, Any] = Field(default_factory=dict)
 
@@ -225,6 +241,7 @@ class StudyGraph(BaseModel):
     topics: list[Topic] = Field(default_factory=list)
     edges: list[Edge] = Field(default_factory=list)
     zones: list[Zone] = Field(default_factory=list)
+    material_sources: list[MaterialSource] = Field(default_factory=list)
     quiz_attempts: list[QuizAttempt] = Field(default_factory=list)
     metadata: dict[str, Any] = Field(default_factory=dict)
 
@@ -352,6 +369,21 @@ class AgentActivity(BaseModel):
     detail: str = ""
 
 
+class DistillationSummary(BaseModel):
+    topic_id: str
+    title: str
+    body: str
+    applied: bool = False
+    artifact_id: str | None = None
+
+
+class DistillationCard(BaseModel):
+    distillation_id: str
+    summary: DistillationSummary | None = None
+    proposal: "ProposalGenerateResponse | None" = None
+    proposal_applied: bool = False
+
+
 class ChatMessage(BaseModel):
     id: str | None = None
     role: ChatRole
@@ -367,6 +399,7 @@ class ChatMessage(BaseModel):
     planning_error: str | None = None
     proposal_applied: bool = False
     proposal: "ProposalGenerateResponse | None" = None
+    distillation: DistillationCard | None = None
     inline_quiz: InlineChatQuiz | None = None
     question: AgentQuestion | None = None
     closure_quiz: TopicQuizSessionPublic | None = None
@@ -409,6 +442,7 @@ class GraphChatRequest(BaseModel):
 
 
 class GraphAssessmentCard(BaseModel):
+    kind: Literal["roadmap", "level", "closure", "review"]
     label: str
     value: str
     tone: Literal["neutral", "good", "warn"]

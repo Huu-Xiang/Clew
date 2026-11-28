@@ -7,11 +7,21 @@ from dataclasses import dataclass, field
 from uuid import uuid4
 
 from app.agent.chatgpt_api import ChatGPTClient
-from app.agent.chatgpt_auth import CALLBACK_PATH, ChatGPTAuth, ChatGPTError, KeyringCredentialStore
+from app.agent.chatgpt_auth import CALLBACK_PATH, ChatGPTAuth, ChatGPTError, CredentialStore, KeyringCredentialStore
 from app.agent.context import BASE_INSTRUCTIONS, developer_instructions, turn_context
-from app.agent.contracts import CLOSURE_QUIZ_TOOLS, tool_specs
+from app.agent.contracts import BLINDSPOT_SYNTHESIS_TOOLS, CLOSURE_QUIZ_TOOLS, StudyBookSynthesisDraft, tool_specs
+from app.agent.providers import (
+    AnthropicClient,
+    OpenAICompatibleClient,
+    ProviderKeyringStore,
+    ProviderRegistry,
+    is_local_base_url,
+    parse_custom_model,
+)
 from app.agent.store import AgentStore
 from app.core.config import Settings
+from app.core.locale import AppLocale
+from app.models.api import StudyBookBlindspotItem
 from app.models.domain import ChatMessage, GraphChatRequest, TopicQuizSession
 from app.services.repository import GraphRepository
 
@@ -42,6 +52,8 @@ class AgentRun:
     quiz_topic_id: str | None = None
     quiz_count: int | None = None
     quiz_session: TopicQuizSession | None = None
+    blindspot_synthesis: StudyBookSynthesisDraft | None = None
+    tool_override: frozenset[str] | None = None
     cancel_requested: bool = False
     web_searched: bool = False
 
@@ -51,11 +63,26 @@ class AgentRun:
         return self.session_id or self.id
 
 
+class _InMemoryCredentialStore:
+    def __init__(self):
+        self._value: dict | None = None
+
+    def read(self) -> dict | None:
+        return dict(self._value) if isinstance(self._value, dict) else None
+
+    def write(self, value: dict) -> None:
+        self._value = dict(value)
+
+    def delete(self) -> None:
+        self._value = None
+
+
 class AgentRuntime:
-    """Clew's agent loop on the Responses API, billed to the learner's ChatGPT plan."""
+    """Clew's agent loop supporting ChatGPT OAuth plus custom Anthropic and OpenAI-compatible providers."""
 
     def __init__(self, settings: Settings, repository: GraphRepository, auth: ChatGPTAuth | None = None,
-                 client: ChatGPTClient | None = None):
+                 client: ChatGPTClient | None = None, provider_store: CredentialStore | None = None,
+                 provider_http=None):
         self.settings = settings
         self.repository = repository
         self.store = AgentStore(repository)
@@ -66,6 +93,17 @@ class AgentRuntime:
                                         registration_path=settings.db_path.parent / "chatgpt-registration.json",
                                         store=KeyringCredentialStore(credential_account))
         self.client = client or ChatGPTClient(self.auth)
+        if provider_store is not None:
+            resolved_provider_store = provider_store
+        elif auth is not None:
+            # Isolated tests inject a fake auth store; keep custom provider secrets isolated in-memory too.
+            resolved_provider_store = _InMemoryCredentialStore()
+        else:
+            provider_account = ("desktop-" + hashlib.sha256(str(settings.db_path.resolve()).encode("utf-8")).hexdigest()[:32]
+                                if settings.desktop_token else "custom-providers")
+            resolved_provider_store = ProviderKeyringStore(provider_account)
+        self.providers = ProviderRegistry(repository, resolved_provider_store)
+        self.provider_http = provider_http
         self.runs: dict[str, AgentRun] = {}
         self.wake = asyncio.Event()
 
@@ -74,51 +112,108 @@ class AgentRuntime:
     def _active(self) -> bool:
         return any(run.status in ACTIVE for run in self.runs.values())
 
-    async def models(self) -> list[dict]:
-        # The plan catalog is ordered by OpenAI; its first listed model is the plan default.
-        return [{"id": m["slug"], "model": m["slug"], "displayName": m["display_name"],
-                 "description": m.get("description") or "", "isDefault": index == 0}
-                for index, m in enumerate(await self.client.list_models())]
+    def has_custom_provider(self) -> bool:
+        return self.providers.has_ready_provider()
 
-    async def account(self) -> dict:
+    async def _chatgpt_models(self) -> list[dict]:
+        return [
+            {
+                "id": m["slug"],
+                "model": m["slug"],
+                "displayName": m["display_name"],
+                "description": m.get("description") or "",
+                "isDefault": index == 0,
+                "providerId": "chatgpt",
+                "providerName": "ChatGPT",
+                "providerKind": "chatgpt",
+                "supportsWebSearch": True,
+                "supportsReasoningEffort": True,
+            }
+            for index, m in enumerate(await self.client.list_models())
+        ]
+
+    async def models(self) -> list[dict]:
+        # Combine ChatGPT plan models (when signed in) with configured custom provider models.
+        combined: list[dict] = []
         status = self.auth.status()
+        if status["authenticated"] and status["sharing"]:
+            combined.extend(await self._chatgpt_models())
+        custom_models = self.providers.catalog_models()
+        combined.extend(custom_models)
+        if combined and not any(m.get("isDefault") for m in combined):
+            combined[0] = {**combined[0], "isDefault": True}
+        return combined
+
+    async def account(self, locale: AppLocale = "en") -> dict:
+        status = self.auth.status(locale)
         login = self.auth.pending or self.auth.completing
-        result = {"connected": True, **status, "models": [],
-                  "login": {"loginId": login.login_id, "authUrl": login.auth_url,
-                            "phase": "completing" if self.auth.completing is login else "pending"} if login else None}
+        custom_summary = self.providers.public_summary()
+        has_custom = self.has_custom_provider()
+        result = {
+            "connected": True,
+            **status,
+            "models": [],
+            "custom_providers": custom_summary["profiles"],
+            "web_search_config": custom_summary["web_search"],
+            "has_custom_providers": has_custom,
+            "web_search_configured": self.providers.has_custom_web_search(),
+            "ready": bool((status["authenticated"] and status["sharing"]) or has_custom),
+            "login": {"loginId": login.login_id, "authUrl": login.auth_url,
+                      "phase": "completing" if self.auth.completing is login else "pending"} if login else None,
+        }
+        combined: list[dict] = []
         if status["authenticated"] and status["sharing"]:
             try:
-                result["models"] = await self.models()
+                fetched = await self.models()
             except ChatGPTError as exc:
-                result.update(self.auth.status())
-                result["error"] = str(exc)
+                result.update(self.auth.status(locale))
+                result["error"] = exc.public_message(locale)
+                combined = self.providers.catalog_models()
             else:
-                result.update(self.auth.status())
+                result.update(self.auth.status(locale))
                 if not result["authenticated"] or not result["sharing"]:
-                    result["models"] = []
+                    combined = self.providers.catalog_models()
+                else:
+                    combined = fetched
+        else:
+            combined = self.providers.catalog_models()
+        if combined and not any(m.get("isDefault") for m in combined):
+            combined[0] = {**combined[0], "isDefault": True}
+        result["models"] = combined
+        result["ready"] = bool((result["authenticated"] and result["sharing"]) or has_custom)
         return result
 
-    async def start_login(self) -> dict:
+    async def start_login(self, locale: AppLocale = "en") -> dict:
         if self._active():
-            raise agent_error("Stop active conversations before changing the ChatGPT account.")
-        login = await self.auth.start_login()
+            raise ChatGPTError("account_change_active", "Stop active conversations before changing the ChatGPT account.")
+        login = await self.auth.start_login(locale)
         return {"loginId": login.login_id, "authUrl": login.auth_url,
                 "phase": "completing" if self.auth.completing is login else "pending"}
 
-    async def logout(self) -> str | None:
+    async def logout(self, locale: AppLocale = "en") -> str | None:
         if self._active():
-            raise agent_error("Stop active conversations before signing out.")
-        return await self.auth.logout()
+            raise ChatGPTError("sign_out_active", "Stop active conversations before signing out.")
+        return await self.auth.logout(locale)
 
     async def _select_model(self, requested: str | None) -> str:
-        models = await self.models()
         selected = requested or self.repository.current().workspace.config.default_model
+        if selected and parse_custom_model(selected):
+            profile_id, model_id = parse_custom_model(selected)  # type: ignore[misc]
+            profile = self.providers.get_profile(profile_id)
+            if not profile or not profile.enabled or model_id not in profile.models:
+                raise agent_error(f"The selected custom model is not configured: {selected}. Choose another model.")
+            if not self.providers.get_api_key(profile_id) and not (
+                profile.kind == "openai_compatible" and is_local_base_url(profile.base_url)
+            ):
+                raise agent_error(f"Missing API key for provider {profile.name}. Re-enter it in Settings.")
+            return selected
+        models = await self.models()
         if selected is None:
             if not models:
-                raise agent_error("Your ChatGPT plan lists no models for apps.")
+                raise agent_error("No AI models are available. Sign in with ChatGPT or add a custom API key in Settings.")
             return models[0]["model"]
         if not any(model["model"] == selected for model in models):
-            raise agent_error(f"The selected model is not available on this ChatGPT plan: {selected}. Choose another model.")
+            raise agent_error(f"The selected model is not available on your connected providers: {selected}. Choose another model.")
         return selected
 
     # Turns
@@ -156,8 +251,41 @@ class AgentRuntime:
         if not closure.can_award_completion:
             raise ValueError("Close prerequisite topics before taking this completion test.")
         selected = await self._select_model(model)
+        quiz_prompt = f"Prepare a closure quiz for topic {topic_id}: exactly {question_count} questions. Call create_closure_quiz with the questions."
+        prior_prompts: list[str] = []
+        prior_missed: list[str] = []
+        seen_prompts: set[str] = set()
+        for prev in reversed(graph.quiz_attempts):
+            if prev.topic_id != topic_id:
+                continue
+            for prompt_text in (prev.asked_prompts or prev.missed_questions):
+                norm = prompt_text.strip()
+                if norm and norm.casefold() not in seen_prompts:
+                    seen_prompts.add(norm.casefold())
+                    prior_prompts.append(norm)
+            for missed_text in prev.missed_questions:
+                norm = missed_text.strip()
+                if norm and norm not in prior_missed:
+                    prior_missed.append(norm)
+            if len(prior_prompts) >= 30:
+                break
+        if prior_prompts:
+            prior_block = "\n".join(f"- {p}" for p in prior_prompts[:30])
+            quiz_prompt += (
+                "\n\nIMPORTANT: This learner is retaking the quiz. Do NOT repeat or trivially rephrase any of these previously asked questions:\n"
+                + prior_block
+                + "\nWrite completely fresh questions using new scenarios, edge cases, and angles."
+            )
+        if prior_missed:
+            missed_block = "\n".join(f"- {m}" for m in prior_missed[:10])
+            quiz_prompt += (
+                "\nOptionally re-test the underlying concepts behind these previously missed items using brand-new scenarios (never copy the old wording):\n"
+                + missed_block
+            )
+        if graph.material_sources:
+            quiz_prompt += " This graph has bound local materials; inspect the topic's key_files or search/read relevant files first so questions test concrete implementation details and real material concepts."
         run = AgentRun(id=uuid4().hex, graph_id=graph_id, session_id=None, model=selected,
-                       request=GraphChatRequest(prompt=f"Prepare a closure quiz for topic {topic_id}: exactly {question_count} questions. Call create_closure_quiz with the questions.", selected_topic_id=topic_id),
+                       request=GraphChatRequest(prompt=quiz_prompt, selected_topic_id=topic_id),
                        done=asyncio.get_running_loop().create_future(), quiz_topic_id=topic_id, quiz_count=question_count)
         self.runs[run.id] = run
         run.task = asyncio.create_task(self._execute(run, []))
@@ -168,6 +296,57 @@ class AgentRuntime:
             if run.quiz_session is None:
                 raise agent_error("The model finished without creating the requested quiz.")
             return run.quiz_session
+        finally:
+            if not run.done.done():
+                await self.interrupt_run(run)
+            self.runs.pop(run.id, None)
+
+    async def synthesize_study_book_blindspots(
+        self,
+        graph_id: str,
+        candidate_topics_payload: list[dict],
+        model: str | None = None,
+    ) -> dict[str, list[StudyBookBlindspotItem]]:
+        if not candidate_topics_payload:
+            return {}
+        graph = self.repository.graph(graph_id)
+        selected = await self._select_model(model)
+        lang_instruction = (
+            "Write every misconception and correction in Simplified Chinese (zh-CN)."
+            if graph.language == "zh-CN"
+            else "Write every misconception and correction in English."
+        )
+        prompt = (
+            f"Analyze the learner's quiz mistakes and chat Q&A below for graph '{graph.title}'. "
+            f"{lang_instruction} For each topic that has clear confusion or errors, call submit_blindspot_synthesis "
+            f"with crisp 'misconception' -> 'correction' pairs (1-5 pairs per topic, concrete and non-generic).\n\n"
+            f"Candidate topics data:\n{json.dumps(candidate_topics_payload, ensure_ascii=False)}"
+        )
+        run = AgentRun(
+            id=uuid4().hex,
+            graph_id=graph_id,
+            session_id=None,
+            model=selected,
+            request=GraphChatRequest(prompt=prompt),
+            done=asyncio.get_running_loop().create_future(),
+            tool_override=BLINDSPOT_SYNTHESIS_TOOLS,
+        )
+        self.runs[run.id] = run
+        run.task = asyncio.create_task(self._execute(run, []))
+        try:
+            await asyncio.shield(run.done)
+            if run.error:
+                raise agent_error(run.error)
+            if run.blindspot_synthesis is None:
+                return {}
+            return {
+                t.topic_id: [
+                    StudyBookBlindspotItem(misconception=i.misconception, correction=i.correction)
+                    for i in t.items
+                ]
+                for t in run.blindspot_synthesis.topics
+                if t.items
+            }
         finally:
             if not run.done.done():
                 await self.interrupt_run(run)
@@ -216,15 +395,23 @@ class AgentRuntime:
     def _first_input(self, run: AgentRun, previous_messages: list[ChatMessage], fresh: bool) -> dict:
         config = self.repository.current().workspace.config
         graph = self.repository.graph(run.graph_id)
-        receipts = [{"proposal_id": m.proposal.proposal_envelope.proposal_id, "applied": True}
-                    for m in previous_messages if m.proposal and m.proposal_applied]
+        receipts = []
+        for m in previous_messages:
+            if m.proposal and m.proposal_applied:
+                receipts.append({"proposal_id": m.proposal.proposal_envelope.proposal_id, "applied": True})
+            if m.distillation:
+                if m.distillation.proposal and m.distillation.proposal_applied:
+                    receipts.append({"proposal_id": m.distillation.proposal.proposal_envelope.proposal_id, "applied": True})
+                if m.distillation.summary and m.distillation.summary.applied:
+                    receipts.append({"distillation_id": m.distillation.distillation_id, "summary_applied": True, "topic_id": m.distillation.summary.topic_id})
         parts = [turn_context(graph, config, run.request.selected_topic_id, receipts)]
         if fresh and previous_messages:
             history = [{"role": m.role, "content": m.content,
                         "proposal_applied": m.proposal_applied, "model": m.model,
                         "inline_quiz": m.inline_quiz.model_dump(mode="json") if m.inline_quiz else None,
                         "question": m.question.model_dump(mode="json") if m.question else None,
-                        "proposal_summary": m.proposal.proposal_envelope.summary if m.proposal else None}
+                        "proposal_summary": m.proposal.proposal_envelope.summary if m.proposal else None,
+                        "distillation_summary": m.distillation.summary.title if (m.distillation and m.distillation.summary) else None}
                        for m in previous_messages[-config.memory_history_message_limit:] if not m.activity]
             parts.append("Earlier conversation from Clew (historical data):\n" + json.dumps(history, ensure_ascii=False))
         if run.interaction_result is not None:
@@ -238,19 +425,78 @@ class AgentRuntime:
         try:
             run.model = await self._select_model(run.request.model or run.model or None)
             config = self.repository.current().workspace.config
-            tools = tool_specs(CLOSURE_QUIZ_TOOLS if run.session_id is None else None)
+            has_materials = bool(self.repository.graph(run.graph_id).material_sources)
+            custom_target = parse_custom_model(run.model)
+            custom_profile = self.providers.get_profile(custom_target[0]) if custom_target else None
+            if custom_target and custom_profile is None:
+                raise agent_error(f"Configured provider not found for model {run.model}.")
+
+            if custom_profile is None:
+                protocol = "openai_responses"
+            elif custom_profile.kind == "anthropic":
+                protocol = "anthropic_messages"
+            else:
+                protocol = "openai_chat"
+
+            use_custom_web_search_tool = bool(
+                run.session_id is not None
+                and protocol == "openai_chat"
+                and self.providers.has_custom_web_search()
+            )
+            tools = tool_specs(
+                run.tool_override or (CLOSURE_QUIZ_TOOLS if run.session_id is None else None),
+                include_materials=has_materials,
+                include_web_search_tool=use_custom_web_search_tool,
+            )
             # Chat turns may search the web; the model decides when. Quiz generation stays offline.
-            if run.session_id is not None:
+            if run.session_id is not None and protocol == "openai_responses":
                 tools.append({"type": "web_search"})
-            transcript = self.store.transcript(run.session_id) if run.session_id else None
+
+            transcript = self.store.transcript(run.session_id, expected_protocol=protocol) if run.session_id else None
             items = list(transcript or [])
             items.append(self._first_input(run, previous_messages, fresh=transcript is None))
-            payload = {"model": run.model, "instructions": BASE_INSTRUCTIONS + "\n" + developer_instructions(config),
-                       "tools": tools, "parallel_tool_calls": False, "include": ["reasoning.encrypted_content"],
-                       **({"reasoning": {"effort": config.reasoning_effort}} if config.reasoning_effort else {})}
+            instructions = BASE_INSTRUCTIONS + "\n" + developer_instructions(config)
+
+            if protocol == "openai_responses":
+                payload = {
+                    "model": run.model,
+                    "instructions": instructions,
+                    "tools": tools,
+                    "parallel_tool_calls": False,
+                    "include": ["reasoning.encrypted_content"],
+                    **({"reasoning": {"effort": config.reasoning_effort}} if config.reasoning_effort else {}),
+                }
+                async def call_model(current_items: list[dict]) -> dict:
+                    return await self.client.stream({**payload, "input": current_items}, lambda event: self._stream_event(run, event))
+            elif protocol == "anthropic_messages":
+                assert custom_profile is not None and custom_target is not None
+                api_key = self.providers.get_api_key(custom_profile.id) or ""
+                anthropic_client = AnthropicClient(api_key=api_key, base_url=custom_profile.base_url, http=self.provider_http)
+                async def call_model(current_items: list[dict]) -> dict:
+                    return await anthropic_client.stream(
+                        model=custom_target[1],
+                        instructions=instructions,
+                        items=current_items,
+                        tools=tools,
+                        enable_web_search=run.session_id is not None,
+                        on_event=lambda event: self._stream_event(run, event),
+                    )
+            else:
+                assert custom_profile is not None and custom_target is not None
+                api_key = self.providers.get_api_key(custom_profile.id) or ""
+                openai_client = OpenAICompatibleClient(api_key=api_key, base_url=custom_profile.base_url, http=self.provider_http)
+                async def call_model(current_items: list[dict]) -> dict:
+                    return await openai_client.stream(
+                        model=custom_target[1],
+                        instructions=instructions,
+                        items=current_items,
+                        tools=tools,
+                        on_event=lambda event: self._stream_event(run, event),
+                    )
+
             self.set_state(run, "running")
             for _ in range(MAX_STEPS):
-                response = await self.client.stream({**payload, "input": items}, lambda event: self._stream_event(run, event))
+                response = await call_model(items)
                 output = [item for item in response.get("output", []) if isinstance(item, dict)]
                 for item in output:
                     if item.get("type") == "message":
@@ -260,7 +506,7 @@ class AgentRuntime:
                 items.extend(output)
                 calls = [item for item in output if item.get("type") == "function_call"]
                 if not calls:
-                    self._save_transcript(run, items)
+                    self._save_transcript(run, items, protocol=protocol)
                     self.finish(run, "completed")
                     return
                 from app.agent.tools import execute_tool
@@ -269,7 +515,7 @@ class AgentRuntime:
                     async with lock:
                         output_text = await execute_tool(self, run, call["name"], call["call_id"], call.get("arguments") or "")
                     items.append({"type": "function_call_output", "call_id": call["call_id"], "output": output_text})
-                self._save_transcript(run, items)
+                self._save_transcript(run, items, protocol=protocol)
                 if run.awaiting_answer:
                     self.finish(run, "completed")
                     return
@@ -282,9 +528,9 @@ class AgentRuntime:
         except Exception as exc:
             self.finish(run, "failed", str(exc))
 
-    def _save_transcript(self, run: AgentRun, items: list[dict]) -> None:
+    def _save_transcript(self, run: AgentRun, items: list[dict], protocol: str = "openai_responses") -> None:
         if run.session_id:
-            self.store.save_transcript(run.session_id, items)
+            self.store.save_transcript(run.session_id, items, protocol=protocol)
 
     def _assistant_message(self, run: AgentRun, item_id: str) -> ChatMessage:
         message = run.messages.get(item_id)
@@ -364,6 +610,18 @@ class AgentRuntime:
         run = next((r for r in self.runs.values() if r.session_id == thread.session_id and not r.done.done()), None)
         if run is not None:
             await self.interrupt_run(run)
+
+    async def revert_message(self, graph_id: str, session_id: str, message_id: str) -> dict:
+        thread = self.repository.chat_thread(graph_id, session_id)
+        await self.interrupt(graph_id, thread.session_id)
+        removed_ids, reverted = self.repository.revert_chat_from_message(graph_id, thread.session_id, message_id)
+        self.store.reset_after_revert(thread.session_id)
+        return {
+            "thread": self.store.thread_payload(graph_id, thread.session_id),
+            "reverted_message_id": reverted.id,
+            "reverted_prompt": "" if reverted.hidden else reverted.content,
+            "removed_count": len(removed_ids),
+        }
 
     async def interrupt_run(self, run: AgentRun) -> None:
         run.cancel_requested = True

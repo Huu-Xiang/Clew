@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Clew 图谱可读性与导览改进想法</title>
+<style>
+  :root { --bg:#faf9f6; --surface:#fff; --surface-2:#f4f1ea; --fg:#24221f; --fg-2:#5c574f; --line:#e6e1d6; --accent:#c86442; --accent-soft:#faeae4; --good:#2d7a4f; --good-soft:#e6f4ec; }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Segoe UI",sans-serif; background:var(--bg); color:var(--fg); line-height:1.65; }
+  .wrap { max-width:900px; margin:0 auto; padding:32px 22px 64px; }
+  header { border-bottom:1px solid var(--line); padding-bottom:18px; margin-bottom:24px; }
+  .eyebrow { font-size:12px; font-weight:700; color:var(--accent); letter-spacing:0.05em; text-transform:uppercase; }
+  h1 { margin:6px 0 8px; font-size:26px; }
+  .meta { font-size:13px; color:var(--fg-2); }
+  .card { background:var(--surface); border:1px solid var(--line); border-radius:14px; padding:18px 20px; margin-bottom:14px; }
+  .card.top { border-color:var(--accent); }
+  .head { display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:8px; }
+  .title { font-size:16px; font-weight:700; }
+  .rank { display:inline-grid; place-items:center; width:22px; height:22px; border-radius:999px; background:var(--accent-soft); color:var(--accent); font-size:12px; font-weight:700; margin-right:8px; }
+  .badge { font-size:12px; font-weight:600; padding:2px 9px; border-radius:999px; background:var(--good-soft); color:var(--good); }
+  p { margin:0 0 8px; font-size:14px; color:var(--fg-2); }
+  .note { font-size:13px; background:var(--surface-2); padding:8px 11px; border-radius:8px; color:var(--fg); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="eyebrow">Clew 图谱可视化改进 · 大白话版</div>
+    <h1>让图谱一眼看懂：每个框是什么、箭头指向哪、从哪开始学</h1>
+    <div class="meta">日期：2026-11-26 · 针对当前 2D 图谱画布（GraphCanvas.tsx）· 10 个候选筛出 5 个高价值方案</div>
+  </header>
+
+  <div class="card top">
+    <div class="head"><div class="title"><span class="rank">1</span>每个虚线大框顶部常驻「分区名牌」（如：事务与并发控制 · 5）</div><span class="badge">最直接解痛点 · 改动小</span></div>
+    <p>现在只有点中某个节点，分区名才会出现；平时只能看到一堆没名字的虚线框。改成在每个虚线框最上方常驻一个半透明小名牌，写清模块名和里面的主题数。</p>
+    <div class="note">效果：一进图谱立刻看懂“为什么这几个节点被框在一起”。</div>
+  </div>
+
+  <div class="card top">
+    <div class="head"><div class="title"><span class="rank">2</span>连线终点加上清晰的方向箭头（先修实线箭头 + 辅助虚线箭头）</div><span class="badge">最直接解痛点 · 改动小</span></div>
+    <p>现在所有连线都没有箭头，分不清谁是谁的先修。在每条线靠近目标节点圆边的位置画一个精致的小箭头，曲线按切线方向自然贴合。</p>
+    <div class="note">效果：一眼看清学习流向（A → B），不再猜先后顺序。</div>
+  </div>
+
+  <div class="card top">
+    <div class="head"><div class="title"><span class="rank">3</span>高亮「当前可以立刻开始」的入口节点（起点光环 + 小徽章）</div><span class="badge">解决“不知道从哪开始” · 改动小</span></div>
+    <p>对所有“没有未完成先修、现在就能直接开干”的节点（例如根节点），加上醒目的暖色外环和简短的「起点 / 可学」小标签；被前置挡住的节点保持克制灰调。</p>
+    <div class="note">效果：打开一张陌生图谱，1 秒锁定今天该从哪 1–2 个节点下手。</div>
+  </div>
+
+  <div class="card">
+    <div class="head"><div class="title"><span class="rank">4</span>鼠标悬停节点即时高亮「上下游依赖链」</div><span class="badge">扫图效率翻倍 · 改动中</span></div>
+    <p>不用点开弹窗，鼠标悬停在任意节点上，自动高亮它的直接先修和能解锁的下游节点与箭头，其余无关节点柔和淡化。</p>
+    <div class="note">效果：快速摸清某个知识点在整张图里的前后因果。</div>
+  </div>
+
+  <div class="card">
+    <div class="head"><div class="title"><span class="rank">5</span>顶部加一个「定位下一个可学主题」快捷按钮</div><span class="badge">零思考开工 · 改动小</span></div>
+    <p>在顶部状态栏放一个「下一步」按钮，点一下画布直接居中并选中当前最推荐的入口节点，不用自己在十几个节点里找。</p>
+    <div class="note">效果：学完一个点一下，顺滑接上下一个。</div>
+  </div>
+</div>
+</body>
+</html>

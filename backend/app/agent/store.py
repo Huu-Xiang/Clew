@@ -24,13 +24,17 @@ class AgentStore:
                 );
                 CREATE INDEX IF NOT EXISTS idx_agent_events_session ON agent_events(session_id, id);
                 CREATE TABLE IF NOT EXISTS agent_transcripts (
-                    session_id TEXT PRIMARY KEY, items_json TEXT NOT NULL
+                    session_id TEXT PRIMARY KEY, items_json TEXT NOT NULL,
+                    protocol TEXT NOT NULL DEFAULT 'openai_responses'
                 );
                 CREATE TABLE IF NOT EXISTS agent_tool_results (
                     call_id TEXT PRIMARY KEY, thread_id TEXT NOT NULL,
                     arguments_json TEXT NOT NULL, result_json TEXT NOT NULL
                 );
             """)
+            cols = {row["name"] for row in conn.execute("PRAGMA table_info(agent_transcripts)").fetchall()}
+            if "protocol" not in cols:
+                conn.execute("ALTER TABLE agent_transcripts ADD COLUMN protocol TEXT NOT NULL DEFAULT 'openai_responses'")
 
     def recover_interrupted(self) -> None:
         with self.repository._connect() as conn:
@@ -53,6 +57,19 @@ class AgentStore:
             conn.execute("DELETE FROM agent_transcripts WHERE session_id=?", (session_id,))
             conn.execute("DELETE FROM agent_tool_results WHERE thread_id=?", (session_id,))
 
+    def reset_after_revert(self, session_id: str) -> None:
+        """Clear model transcript and tool receipts after truncating messages while keeping agent_events monotonic."""
+        with self.repository._connect() as conn:
+            conn.execute("DELETE FROM agent_transcripts WHERE session_id=?", (session_id,))
+            conn.execute("DELETE FROM agent_tool_results WHERE thread_id=?", (session_id,))
+            conn.execute(
+                """INSERT INTO agent_sessions (session_id, run_id, status, turn_id, error, client_message_id)
+                VALUES (?, NULL, 'idle', NULL, NULL, NULL)
+                ON CONFLICT(session_id) DO UPDATE SET
+                run_id=NULL, status='idle', turn_id=NULL, error=NULL, client_message_id=NULL""",
+                (session_id,),
+            )
+
     def binding(self, session_id: str) -> dict:
         with self.repository._connect() as conn:
             row = conn.execute("SELECT * FROM agent_sessions WHERE session_id=?", (session_id,)).fetchone()
@@ -69,17 +86,21 @@ class AgentStore:
                 run_id=excluded.run_id, status='starting', turn_id=NULL, error=NULL,
                 client_message_id=excluded.client_message_id""", (session_id, run_id, client_message_id))
 
-    def transcript(self, session_id: str) -> list[dict] | None:
-        """Responses API input items for this conversation; None before its first stored turn."""
+    def transcript(self, session_id: str, expected_protocol: str | None = None) -> list[dict] | None:
+        """Stored model input items for this conversation; None before its first stored turn or on protocol switch."""
         with self.repository._connect() as conn:
-            row = conn.execute("SELECT items_json FROM agent_transcripts WHERE session_id=?", (session_id,)).fetchone()
-        return json.loads(row["items_json"]) if row else None
+            row = conn.execute("SELECT items_json, protocol FROM agent_transcripts WHERE session_id=?", (session_id,)).fetchone()
+        if not row:
+            return None
+        if expected_protocol is not None and (row["protocol"] or "openai_responses") != expected_protocol:
+            return None
+        return json.loads(row["items_json"])
 
-    def save_transcript(self, session_id: str, items: list[dict]) -> None:
+    def save_transcript(self, session_id: str, items: list[dict], protocol: str = "openai_responses") -> None:
         with self.repository._connect() as conn:
-            conn.execute("""INSERT INTO agent_transcripts (session_id, items_json) VALUES (?, ?)
-                ON CONFLICT(session_id) DO UPDATE SET items_json=excluded.items_json""",
-                (session_id, json.dumps(items, ensure_ascii=False)))
+            conn.execute("""INSERT INTO agent_transcripts (session_id, items_json, protocol) VALUES (?, ?, ?)
+                ON CONFLICT(session_id) DO UPDATE SET items_json=excluded.items_json, protocol=excluded.protocol""",
+                (session_id, json.dumps(items, ensure_ascii=False), protocol))
 
     def state(self, session_id: str, run_id: str, status: str, *, error: str | None = None) -> None:
         with self.repository._connect() as conn:

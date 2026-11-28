@@ -64,7 +64,7 @@ class AgentRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(request["model"], "test-model")
         self.assertNotIn("reasoning", request)
         self.assertEqual({tool["name"] for tool in request["tools"] if tool["type"] == "function"},
-                         {"read_graph", "read_topic", "propose_ingest", "propose_expand", "ask_question", "present_quiz", "create_closure_quiz"})
+                         {"read_graph", "read_topic", "propose_ingest", "propose_expand", "propose_distillation", "ask_question", "present_quiz", "create_closure_quiz"})
         # Web search is always offered in chat; the model decides whether to use it.
         self.assertIn({"type": "web_search"}, request["tools"])
 
