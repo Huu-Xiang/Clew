@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef } from "react";
 
 import type { Edge, Topic, Zone } from "../lib/types";
 import { DEFAULT_CANVAS_STYLE, type CanvasStylePreferences } from "../lib/canvasStyle";
+import { buildCollapsedGraphProjection, macroNodeId, parseMacroNodeId } from "../lib/collapsedZones";
 import {
   ZONE_GEOMETRY_REFRESH_FRAMES,
   ZONE_REVEAL_DURATION_FRAMES,
@@ -13,7 +14,6 @@ import {
   clamp,
   cloneManualNodePositions,
   computeReadyTopicIds,
-  dedupeRenderEdges,
   edgeRenderMotion,
   graphCanvasPalette,
   hashString,
@@ -426,6 +426,8 @@ function GraphCanvasComponent({
   viewportCenteredWheelZoom = false,
   curvedEdgeLinesEnabled = true,
   canvasStyle = DEFAULT_CANVAS_STYLE,
+  collapsedZoneIds,
+  onToggleCollapseZone,
 }: {
   topics: Topic[];
   edges: Edge[];
@@ -455,6 +457,8 @@ function GraphCanvasComponent({
   viewportCenteredWheelZoom?: boolean;
   curvedEdgeLinesEnabled?: boolean;
   canvasStyle?: CanvasStylePreferences;
+  collapsedZoneIds?: Set<string>;
+  onToggleCollapseZone?: (zoneId: string) => void;
 }
 ): React.JSX.Element {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -492,10 +496,23 @@ function GraphCanvasComponent({
   const zoneRevealStartFrameRef = useRef<number>(0);
   const themeModeRef = useRef<GraphCanvasThemeMode>(themeMode);
   const viewportSignatureRef = useRef<string>("");
+  const collapsedZoneIdsRef = useRef<Set<string>>(collapsedZoneIds ?? new Set());
+  const onToggleCollapseZoneRef = useRef(onToggleCollapseZone);
+  const hoveredNodeIdRef = useRef<string | null>(null);
+  const hoveredZoneIdRef = useRef<string | null>(null);
+  const zoneHitBoxesRef = useRef<Map<string, { left: number; right: number; top: number; bottom: number }>>(new Map());
   paletteRef.current = graphCanvasPalette(themeMode);
   themeModeRef.current = themeMode;
   curvedEdgeLinesEnabledRef.current = curvedEdgeLinesEnabled;
   canvasStyleRef.current = canvasStyle;
+  collapsedZoneIdsRef.current = collapsedZoneIds ?? new Set();
+  onToggleCollapseZoneRef.current = onToggleCollapseZone;
+
+  useEffect(() => {
+    idleFrozenRef.current = false;
+    idleSettleFramesRef.current = 0;
+    labelPlacementRef.current.clear();
+  }, [collapsedZoneIds]);
 
   // Animate zoom toward the requested target.
   useEffect(() => {
@@ -932,7 +949,9 @@ function GraphCanvasComponent({
         idleMotionActive ||
         structureAnimatingZones ||
         zoneGeometryRef.current.size === 0;
+      const activeCollapsedForBg = layoutEditModeRef.current ? new Set<string>() : collapsedZoneIdsRef.current;
       for (const [zoneIndex, zone] of zonesDataRef.current.entries()) {
+        if (activeCollapsedForBg.has(zone.id)) continue;
         let geometry = zoneGeometryRef.current.get(zone.id);
         if (shouldRefreshZoneGeometry || !geometry) {
           const zonePoints = zone.topic_ids
@@ -1221,21 +1240,60 @@ function GraphCanvasComponent({
           vy: position.vy,
         });
       }
-      const edgePositions = idleVisualMotionEnabled ? positions : renderPositions;
-      const renderEdges = dedupeRenderEdges(currentEdges, pathEdgeIdsRef.current);
+      const edgePositions = new Map<string, NodePosition>(idleVisualMotionEnabled ? positions : renderPositions);
       const readyTopicIds = computeReadyTopicIds(currentNodes, currentEdges);
       const nodeById = new Map(currentNodes.map((node) => [node.id, node]));
+      const effectiveCollapsedZoneIds = layoutEditModeRef.current ? new Set<string>() : collapsedZoneIdsRef.current;
+      const projection = buildCollapsedGraphProjection({
+        topics: currentNodes,
+        edges: currentEdges,
+        zones: zonesDataRef.current,
+        collapsedZoneIds: effectiveCollapsedZoneIds,
+      });
+      const visibleNodes = projection.visibleTopics;
+
+      // Compute Macro-Node card geometry for collapsed zones at each zone's topic centroid.
+      ctx2.save();
+      ctx2.font = "650 12.5px -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Segoe UI', 'Inter', sans-serif";
+      const macroCards = new Map<
+        string,
+        { zone: Zone; x: number; y: number; width: number; height: number; completed: number; total: number; hasReady: boolean }
+      >();
+      for (const zone of projection.collapsedZones) {
+        const pts = zone.topic_ids.map((tid) => positions.get(tid)).filter((p): p is NodePosition => Boolean(p));
+        if (pts.length === 0) continue;
+        const cx = pts.reduce((s, p) => s + p.x, 0) / pts.length;
+        const cy = pts.reduce((s, p) => s + p.y, 0) / pts.length;
+        const memberTopics = zone.topic_ids.map((tid) => nodeById.get(tid)).filter((t): t is GraphNode => Boolean(t));
+        const completed = memberTopics.filter((t) => t.state === "solid" || t.state === "mastered").length;
+        const hasReady = memberTopics.some((t) => readyTopicIds.has(t.id));
+        const titleW = ctx2.measureText(zone.title).width;
+        const cardW = clamp(Math.ceil(titleW + 38), 164, 280);
+        const cardH = 56;
+        macroCards.set(zone.id, { zone, x: cx, y: cy, width: cardW, height: cardH, completed, total: memberTopics.length, hasReady });
+        edgePositions.set(macroNodeId(zone.id), { x: cx, y: cy, vx: 0, vy: 0 });
+      }
+      ctx2.restore();
+
+      const hoveredNodeId = hoveredNodeIdRef.current;
+      const hoveredZoneId = hoveredZoneIdRef.current;
+      const hasActiveFocus = Boolean(selectedTopicIdRef.current || hoveredNodeId || hoveredZoneId);
+      const focusedNodeNeighbors = new Set<string>();
       const bundleMetaByEdgeId = new Map<string, { angle: number; laneOffset: number; laneCount: number }>();
 
-      const outgoingBySource = new Map<string, Array<{ edge: Edge; angle: number }>>();
-      for (const edge of renderEdges) {
-        const from = edgePositions.get(edge.source_topic_id);
-        const to = edgePositions.get(edge.target_topic_id);
+      const outgoingBySource = new Map<string, Array<{ id: string; angle: number }>>();
+      for (const pe of projection.projectedEdges) {
+        const from = edgePositions.get(pe.sourceId);
+        const to = edgePositions.get(pe.targetId);
         if (!from || !to) continue;
+        if (hoveredNodeId && (pe.sourceId === hoveredNodeId || pe.targetId === hoveredNodeId)) {
+          focusedNodeNeighbors.add(pe.sourceId);
+          focusedNodeNeighbors.add(pe.targetId);
+        }
         const angle = Math.atan2(to.y - from.y, to.x - from.x);
-        const entries = outgoingBySource.get(edge.source_topic_id);
-        if (entries) entries.push({ edge, angle });
-        else outgoingBySource.set(edge.source_topic_id, [{ edge, angle }]);
+        const entries = outgoingBySource.get(pe.sourceId);
+        if (entries) entries.push({ id: pe.id, angle });
+        else outgoingBySource.set(pe.sourceId, [{ id: pe.id, angle }]);
       }
 
       for (const [sourceId, entries] of outgoingBySource) {
@@ -1246,7 +1304,7 @@ function GraphCanvasComponent({
         const resolvedAngle = Math.abs(normalizeAngle(bundleAngle - sourceAnchorAngle)) > 0.9 ? sourceAnchorAngle : bundleAngle;
         const laneSpacing = clamp(10 - entries.length * 0.6, 5, 10);
         entries.forEach((entry, index) => {
-          bundleMetaByEdgeId.set(entry.edge.id, {
+          bundleMetaByEdgeId.set(entry.id, {
             angle: resolvedAngle,
             laneOffset: (index - (entries.length - 1) / 2) * laneSpacing,
             laneCount: entries.length,
@@ -1254,29 +1312,42 @@ function GraphCanvasComponent({
         });
       }
 
-      for (const edge of renderEdges) {
-        const from = edgePositions.get(edge.source_topic_id);
-        const to = edgePositions.get(edge.target_topic_id);
+      for (const pe of projection.projectedEdges) {
+        const from = edgePositions.get(pe.sourceId);
+        const to = edgePositions.get(pe.targetId);
         if (!from || !to) continue;
-        const edgeKey = `e:${edge.id}`;
+        const firstOrigId = pe.originalEdgeIds[0] ?? pe.id;
+        const edgeKey = `e:${firstOrigId}`;
         const litFrame = litFrameRef.current.get(edgeKey);
         const fadeRate = Math.max(16, cascadeStepFramesRef.current * 1.5);
-        const { brightness: edgeBrightness, pulse } = edgeRenderMotion({
+        const { brightness: rawBrightness, pulse } = edgeRenderMotion({
           edgeMotionFrozen,
           fadeRate,
           frameCount,
           fromX: from.x,
           litFrame,
         });
-        const onPath = pathEdgeIdsRef.current.has(edge.id);
-        const onFrontier = frontierEdgeIdsRef.current.has(edge.id);
-        const sourceZoneId = zoneByTopicId.get(edge.source_topic_id) ?? null;
-        const targetZoneId = zoneByTopicId.get(edge.target_topic_id) ?? null;
-        const highlightedSourceZone = sourceZoneId && selectedZoneIds.has(sourceZoneId) ? zoneById.get(sourceZoneId) ?? null : null;
-        const highlightedTargetZone = targetZoneId && selectedZoneIds.has(targetZoneId) ? zoneById.get(targetZoneId) ?? null : null;
+        const edgeBrightness = pe.sourceIsMacro || pe.targetIsMacro ? 1 : rawBrightness;
+        const onPath = pe.originalEdgeIds.some((id) => pathEdgeIdsRef.current.has(id));
+        const onFrontier = pe.originalEdgeIds.some((id) => frontierEdgeIdsRef.current.has(id));
+        const isHoveredIncident =
+          (hoveredNodeId !== null && (pe.sourceId === hoveredNodeId || pe.targetId === hoveredNodeId)) ||
+          (hoveredZoneId !== null && (pe.sourceZoneId === hoveredZoneId || pe.targetZoneId === hoveredZoneId));
+        const isSelectedIncident =
+          selectedTopicIdRef.current !== null &&
+          (pe.sourceId === selectedTopicIdRef.current || pe.targetId === selectedTopicIdRef.current);
+        const isFocusedEdge = onPath || isHoveredIncident || isSelectedIncident;
+        const isMacroEdge = pe.sourceIsMacro || pe.targetIsMacro;
+        const isCrossZoneTopicEdge =
+          !isMacroEdge && pe.sourceZoneId !== null && pe.targetZoneId !== null && pe.sourceZoneId !== pe.targetZoneId;
+
+        const sourceZoneId = pe.sourceZoneId;
+        const targetZoneId = pe.targetZoneId;
+        const highlightedSourceZone = sourceZoneId && (selectedZoneIds.has(sourceZoneId) || hoveredZoneId === sourceZoneId) ? zoneById.get(sourceZoneId) ?? null : null;
+        const highlightedTargetZone = targetZoneId && (selectedZoneIds.has(targetZoneId) || hoveredZoneId === targetZoneId) ? zoneById.get(targetZoneId) ?? null : null;
         const targetX = from.x + (to.x - from.x) * edgeBrightness;
         const targetY = from.y + (to.y - from.y) * edgeBrightness;
-        const bundleMeta = bundleMetaByEdgeId.get(edge.id);
+        const bundleMeta = bundleMetaByEdgeId.get(pe.id);
         const bundleAngle = bundleMeta?.angle ?? Math.atan2(targetY - from.y, targetX - from.x);
         const bundleDist = Math.max(16, Math.min(46, Math.hypot(targetX - from.x, targetY - from.y) * 0.24));
         const laneOffset = bundleMeta?.laneOffset ?? 0;
@@ -1289,7 +1360,15 @@ function GraphCanvasComponent({
         const endControlX = targetX - Math.cos(targetAngle) * endBundleDist + perpX * laneOffset * 0.24;
         const endControlY = targetY - Math.sin(targetAngle) * endBundleDist + perpY * laneOffset * 0.24;
 
-        const isAuxEdge = edge.relation !== "requires";
+        const isAuxEdge = !pe.hasRequires;
+        const dimFactor = isFocusedEdge
+          ? 1
+          : isCrossZoneTopicEdge
+            ? 0.26
+            : hasActiveFocus
+              ? 0.55
+              : 1;
+
         ctx2.beginPath();
         ctx2.moveTo(from.x, from.y);
         if (curvedEdgeLinesEnabledRef.current) {
@@ -1297,59 +1376,77 @@ function GraphCanvasComponent({
         } else {
           ctx2.lineTo(targetX, targetY);
         }
-        let arrowFillStyle: string | CanvasGradient = `rgba(${paletteRef.current.edgeRgb},${Math.min(0.85, canvasStyleRef.current.edgeOpacity * 1.45 * edgeBrightness)})`;
-        if (onPath) {
+        let arrowFillStyle: string | CanvasGradient = `rgba(${paletteRef.current.edgeRgb},${Math.min(0.88, canvasStyleRef.current.edgeOpacity * 1.45 * edgeBrightness * dimFactor)})`;
+        if (isFocusedEdge) {
           if (themeModeRef.current === "light" && (highlightedSourceZone || highlightedTargetZone)) {
             const startRgb = hexToRgb(highlightedSourceZone?.color ?? highlightedTargetZone?.color ?? "#64748b") ?? { r: 100, g: 116, b: 139 };
             const endRgb = hexToRgb(highlightedTargetZone?.color ?? highlightedSourceZone?.color ?? "#64748b") ?? { r: 100, g: 116, b: 139 };
             if (highlightedSourceZone && highlightedTargetZone && highlightedSourceZone.id !== highlightedTargetZone.id) {
               const gradient = ctx2.createLinearGradient(from.x, from.y, targetX, targetY);
-              gradient.addColorStop(0, rgbaString(startRgb, Math.max(0.24, pulse * 0.7 * edgeBrightness)));
-              gradient.addColorStop(1, rgbaString(endRgb, Math.max(0.24, pulse * 0.7 * edgeBrightness)));
+              gradient.addColorStop(0, rgbaString(startRgb, Math.max(0.38, pulse * 0.78 * edgeBrightness)));
+              gradient.addColorStop(1, rgbaString(endRgb, Math.max(0.38, pulse * 0.78 * edgeBrightness)));
               ctx2.strokeStyle = gradient;
-              arrowFillStyle = rgbaString(endRgb, Math.max(0.45, pulse * 0.85 * edgeBrightness));
+              arrowFillStyle = rgbaString(endRgb, Math.max(0.58, pulse * 0.88 * edgeBrightness));
             } else {
               const rgb = mixRgb(startRgb, { r: 100, g: 116, b: 139 }, 0.1);
-              ctx2.strokeStyle = rgbaString(rgb, Math.max(0.22, pulse * 0.72 * edgeBrightness));
-              arrowFillStyle = rgbaString(rgb, Math.max(0.45, pulse * 0.85 * edgeBrightness));
+              ctx2.strokeStyle = rgbaString(rgb, Math.max(0.36, pulse * 0.78 * edgeBrightness));
+              arrowFillStyle = rgbaString(rgb, Math.max(0.58, pulse * 0.88 * edgeBrightness));
             }
           } else {
-            ctx2.strokeStyle = `rgba(${paletteRef.current.edgeRgb},${Math.max(0.18, pulse * edgeBrightness)})`;
-            arrowFillStyle = `rgba(${paletteRef.current.edgeRgb},${Math.max(0.32, pulse * edgeBrightness)})`;
+            ctx2.strokeStyle = `rgba(${paletteRef.current.edgeRgb},${Math.min(0.88, Math.max(0.34, canvasStyleRef.current.edgeOpacity * 2.1 * edgeBrightness))})`;
+            arrowFillStyle = `rgba(${paletteRef.current.edgeRgb},${Math.min(0.92, Math.max(0.48, canvasStyleRef.current.edgeOpacity * 2.4 * edgeBrightness))})`;
           }
-          ctx2.lineWidth = Math.max(1.7, canvasStyleRef.current.edgeWidth + 0.5);
+          ctx2.lineWidth = Math.max(1.85, canvasStyleRef.current.edgeWidth + 0.65);
+        } else if (isMacroEdge) {
+          const macroBoost = Math.min(1.4, (pe.count - 1) * 0.25);
+          const alpha = Math.min(0.75, Math.max(0.28, canvasStyleRef.current.edgeOpacity * 1.55 * dimFactor));
+          ctx2.strokeStyle = `rgba(${paletteRef.current.edgeRgb},${alpha})`;
+          arrowFillStyle = `rgba(${paletteRef.current.edgeRgb},${Math.min(0.88, alpha * 1.35)})`;
+          ctx2.lineWidth = canvasStyleRef.current.edgeWidth + 0.45 + macroBoost;
         } else if (onFrontier || isAuxEdge) {
           ctx2.setLineDash(onFrontier ? [7, 9] : [4, 5]);
-          ctx2.strokeStyle = `rgba(${paletteRef.current.edgeRgb},${canvasStyleRef.current.edgeOpacity * edgeBrightness})`;
-          ctx2.lineWidth = canvasStyleRef.current.edgeWidth;
+          ctx2.strokeStyle = `rgba(${paletteRef.current.edgeRgb},${canvasStyleRef.current.edgeOpacity * edgeBrightness * dimFactor})`;
+          ctx2.lineWidth = canvasStyleRef.current.edgeWidth * (isCrossZoneTopicEdge ? 0.85 : 1);
         } else {
-          ctx2.strokeStyle = `rgba(${paletteRef.current.edgeRgb},${canvasStyleRef.current.edgeOpacity * edgeBrightness})`;
-          ctx2.lineWidth = canvasStyleRef.current.edgeWidth;
+          ctx2.strokeStyle = `rgba(${paletteRef.current.edgeRgb},${canvasStyleRef.current.edgeOpacity * edgeBrightness * dimFactor})`;
+          ctx2.lineWidth = canvasStyleRef.current.edgeWidth * (isCrossZoneTopicEdge ? 0.85 : 1);
         }
         ctx2.stroke();
         if (onFrontier || isAuxEdge) {
           ctx2.setLineDash([]);
         }
 
-        // Draw directional arrowhead near the target node rim so prerequisite flow is unmistakable.
+        // Draw directional arrowhead near the target rim (circle for topics, card rectangle for collapsed macro-nodes).
         if (edgeBrightness > 0.7) {
-          const targetNode = nodeById.get(edge.target_topic_id);
-          const targetR = targetNode
-            ? nodeRadius(
-                targetNode,
-                selectedTopicIdRef.current === targetNode.id,
-                pathNodeIdsRef.current.has(targetNode.id),
-                rootIdsRef.current.has(targetNode.id),
-              )
-            : 6;
           const arrivalAngle = curvedEdgeLinesEnabledRef.current
             ? Math.atan2(targetY - endControlY, targetX - endControlX)
             : Math.atan2(targetY - from.y, targetX - from.x);
+          let targetStopOffset = 11;
+          const targetMacroZoneId = parseMacroNodeId(pe.targetId);
+          if (targetMacroZoneId) {
+            const card = macroCards.get(targetMacroZoneId);
+            if (card) {
+              const cosA = Math.abs(Math.cos(arrivalAngle)) || 1e-4;
+              const sinA = Math.abs(Math.sin(arrivalAngle)) || 1e-4;
+              targetStopOffset = Math.min((card.width / 2) / cosA, (card.height / 2) / sinA) + 5;
+            }
+          } else {
+            const targetNode = nodeById.get(pe.targetId);
+            const targetR = targetNode
+              ? nodeRadius(
+                  targetNode,
+                  selectedTopicIdRef.current === targetNode.id,
+                  pathNodeIdsRef.current.has(targetNode.id),
+                  rootIdsRef.current.has(targetNode.id),
+                )
+              : 6;
+            targetStopOffset = targetR + 5;
+          }
           const dist = Math.hypot(targetX - from.x, targetY - from.y);
-          if (dist > targetR + 14) {
-            const tipX = targetX - Math.cos(arrivalAngle) * (targetR + 5);
-            const tipY = targetY - Math.sin(arrivalAngle) * (targetR + 5);
-            const arrowLen = (onPath ? 8.5 : 7) + canvasStyleRef.current.edgeWidth * 0.7;
+          if (dist > targetStopOffset + 12) {
+            const tipX = targetX - Math.cos(arrivalAngle) * targetStopOffset;
+            const tipY = targetY - Math.sin(arrivalAngle) * targetStopOffset;
+            const arrowLen = (isFocusedEdge || isMacroEdge ? 8.8 : 6.8) + canvasStyleRef.current.edgeWidth * 0.65;
             const wingAngle = 0.42;
             ctx2.beginPath();
             ctx2.moveTo(tipX, tipY);
@@ -1371,7 +1468,7 @@ function GraphCanvasComponent({
         if (sources) sources.push(position);
         else frontierSourcesByTarget.set(edge.target_topic_id, [position]);
       }
-      for (const node of currentNodes) {
+      for (const node of visibleNodes) {
         const position = renderPositions.get(node.id);
         if (!position) continue;
         const litFrame = litFrameRef.current.get(node.id);
@@ -1486,7 +1583,7 @@ function GraphCanvasComponent({
       }
 
       const placedLabels: LabelBox[] = [];
-      const labelNodes = [...currentNodes].sort((left, right) => {
+      const labelNodes = [...visibleNodes].sort((left, right) => {
         const leftScore = (selectedTopicIdRef.current === left.id ? 100 : 0) + (pathNodeIdsRef.current.has(left.id) ? 10 : 0) + (ancestorIdsRef.current.has(left.id) ? 1 : 0);
         const rightScore =
           (selectedTopicIdRef.current === right.id ? 100 : 0) + (pathNodeIdsRef.current.has(right.id) ? 10 : 0) + (ancestorIdsRef.current.has(right.id) ? 1 : 0);
@@ -1598,38 +1695,112 @@ function GraphCanvasComponent({
 
       ctx2.restore();
 
+      zoneHitBoxesRef.current.clear();
+      const canInteractiveCollapse = Boolean(onToggleCollapseZoneRef.current && !layoutEditModeRef.current);
+
+      // Draw interactive Macro-Node cards for collapsed zones.
+      for (const [zoneId, card] of macroCards.entries()) {
+        const { zone, x, y, width: cardW, height: cardH, completed, total, hasReady } = card;
+        const isHovered = hoveredZoneId === zoneId;
+        const rgb = hexToRgb(zone.color) ?? { r: 200, g: 100, b: 66 };
+        const left = x - cardW / 2;
+        const top = y - cardH / 2;
+        if (canInteractiveCollapse) {
+          zoneHitBoxesRef.current.set(zoneId, { left, right: left + cardW, top, bottom: top + cardH });
+        }
+        ctx2.save();
+        if (hasReady || isHovered) {
+          ctx2.shadowBlur = isHovered ? 18 : 12;
+          ctx2.shadowColor = rgbaString(rgb, isHovered ? 0.34 : 0.22);
+        }
+        const cardFill =
+          themeModeRef.current === "light"
+            ? rgbaString(mixRgb(rgb, { r: 255, g: 253, b: 249 }, isHovered ? 0.85 : 0.91), 0.98)
+            : rgbaString(mixRgb(rgb, { r: 22, g: 22, b: 26 }, isHovered ? 0.78 : 0.85), 0.96);
+        ctx2.beginPath();
+        ctx2.roundRect(left, top, cardW, cardH, 14);
+        ctx2.fillStyle = cardFill;
+        ctx2.fill();
+        ctx2.lineWidth = isHovered ? 2 : hasReady ? 1.75 : 1.35;
+        ctx2.strokeStyle = rgbaString(rgb, isHovered ? 0.92 : hasReady ? 0.76 : 0.52);
+        ctx2.stroke();
+        ctx2.shadowBlur = 0;
+
+        // Title line
+        ctx2.font = "650 12.5px -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Segoe UI', 'Inter', sans-serif";
+        ctx2.textAlign = "center";
+        ctx2.textBaseline = "middle";
+        ctx2.fillStyle =
+          themeModeRef.current === "light"
+            ? rgbaString(mixRgb(rgb, { r: 30, g: 28, b: 25 }, 0.65), 0.98)
+            : rgbaString(mixRgb(rgb, { r: 245, g: 245, b: 247 }, 0.7), 0.98);
+        ctx2.fillText(zone.title, x, top + 19);
+
+        // Subtitle + progress bar
+        ctx2.font = "500 10.5px -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Segoe UI', 'Inter', sans-serif";
+        ctx2.fillStyle = `rgba(${paletteRef.current.labelRgb},0.72)`;
+        ctx2.fillText(`${completed}/${total} · ▸`, x, top + 36);
+
+        const barW = cardW - 28;
+        const barX = x - barW / 2;
+        const barY = top + cardH - 9;
+        ctx2.beginPath();
+        ctx2.roundRect(barX, barY, barW, 3.5, 999);
+        ctx2.fillStyle = rgbaString(rgb, 0.16);
+        ctx2.fill();
+        if (total > 0 && completed > 0) {
+          ctx2.beginPath();
+          ctx2.roundRect(barX, barY, Math.max(6, barW * (completed / total)), 3.5, 999);
+          ctx2.fillStyle = rgbaString(rgb, 0.85);
+          ctx2.fill();
+        }
+        ctx2.restore();
+      }
+
+      // Draw header pills for expanded zones (clickable to collapse into a Macro-Node).
       for (const zone of zonesDataRef.current) {
-        const isHighlightedZone = selectedZoneIds.has(zone.id);
+        if (effectiveCollapsedZoneIds.has(zone.id)) continue;
+        const isHighlightedZone = selectedZoneIds.has(zone.id) || hoveredZoneId === zone.id;
         if (!isHighlightedZone && !canvasStyleRef.current.showZoneOutlines) continue;
         const zonePoints = zone.topic_ids.map((topicId) => renderPositions.get(topicId)).filter((point): point is NodePosition => Boolean(point));
         if (zonePoints.length === 0) continue;
+        const memberTopics = zone.topic_ids.map((tid) => nodeById.get(tid)).filter((t): t is GraphNode => Boolean(t));
+        const doneCount = memberTopics.filter((t) => t.state === "solid" || t.state === "mastered").length;
         const avgX = zonePoints.reduce((acc, point) => acc + point.x, 0) / zonePoints.length;
         const minY = Math.min(...zonePoints.map((point) => point.y));
         const labelX = avgX;
         const labelY = minY - 34;
         const rgb = hexToRgb(zone.color) ?? { r: 217, g: 119, b: 87 };
-        const badgeText = `${zone.title} · ${zonePoints.length}`;
+        const badgeText = `${zone.title} · ${doneCount}/${zonePoints.length}${canInteractiveCollapse ? " ▾" : ""}`;
         ctx2.save();
         ctx2.font = "600 11px -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Segoe UI', 'Inter', sans-serif";
         ctx2.textAlign = "center";
         ctx2.textBaseline = "middle";
         const textWidth = ctx2.measureText(badgeText).width;
-        const padX = 9;
+        const padX = 10;
         const pillW = textWidth + padX * 2;
-        const pillH = 22;
+        const pillH = 23;
+        if (canInteractiveCollapse) {
+          zoneHitBoxesRef.current.set(zone.id, {
+            left: labelX - pillW / 2 - 2,
+            right: labelX + pillW / 2 + 2,
+            top: labelY - pillH / 2 - 2,
+            bottom: labelY + pillH / 2 + 2,
+          });
+        }
         const pillBg = themeModeRef.current === "light"
-          ? rgbaString(mixRgb(rgb, { r: 255, g: 255, b: 255 }, 0.88), isHighlightedZone ? 0.96 : 0.88)
-          : rgbaString(mixRgb(rgb, { r: 20, g: 20, b: 24 }, 0.82), isHighlightedZone ? 0.94 : 0.78);
+          ? rgbaString(mixRgb(rgb, { r: 255, g: 255, b: 255 }, 0.88), isHighlightedZone ? 0.97 : 0.9)
+          : rgbaString(mixRgb(rgb, { r: 20, g: 20, b: 24 }, 0.82), isHighlightedZone ? 0.95 : 0.8);
         ctx2.beginPath();
         ctx2.roundRect(labelX - pillW / 2, labelY - pillH / 2, pillW, pillH, 999);
         ctx2.fillStyle = pillBg;
         ctx2.fill();
-        ctx2.lineWidth = 1;
-        ctx2.strokeStyle = rgbaString(rgb, isHighlightedZone ? 0.72 : 0.38);
+        ctx2.lineWidth = hoveredZoneId === zone.id ? 1.5 : 1;
+        ctx2.strokeStyle = rgbaString(rgb, isHighlightedZone ? 0.78 : 0.42);
         ctx2.stroke();
         ctx2.fillStyle = themeModeRef.current === "light"
-          ? rgbaString(mixRgb(rgb, { r: 36, g: 34, b: 31 }, 0.35), isHighlightedZone ? 0.96 : 0.84)
-          : rgbaString(rgb, isHighlightedZone ? 0.98 : 0.85);
+          ? rgbaString(mixRgb(rgb, { r: 36, g: 34, b: 31 }, 0.35), isHighlightedZone ? 0.98 : 0.86)
+          : rgbaString(rgb, isHighlightedZone ? 0.98 : 0.88);
         ctx2.fillText(badgeText, labelX, labelY);
         ctx2.restore();
       }
@@ -1813,7 +1984,51 @@ function GraphCanvasComponent({
       manualPositionsRef.current = nextManualPositions;
       return;
     }
-    if (!dragStartRef.current) return;
+    if (!dragStartRef.current) {
+      const { x: canvasX, y: canvasY } = screenToCanvas(event.clientX, event.clientY);
+      const effectiveCollapsed = layoutEditModeRef.current ? new Set<string>() : collapsedZoneIdsRef.current;
+      const collapsedTopicSet = new Set<string>();
+      for (const z of zonesDataRef.current) {
+        if (effectiveCollapsed.has(z.id)) {
+          for (const tid of z.topic_ids) collapsedTopicSet.add(tid);
+        }
+      }
+      let nextHoveredNode: string | null = null;
+      let bestD2 = 24 * 24;
+      for (const node of nodesDataRef.current) {
+        if (collapsedTopicSet.has(node.id)) continue;
+        const pos = nodesRef.current.get(node.id);
+        if (!pos) continue;
+        const d2 = (pos.x - canvasX) ** 2 + (pos.y - canvasY) ** 2;
+        if (d2 < bestD2) {
+          bestD2 = d2;
+          nextHoveredNode = node.id;
+        }
+      }
+      let nextHoveredZone: string | null = null;
+      if (!nextHoveredNode) {
+        for (const [zid, box] of zoneHitBoxesRef.current.entries()) {
+          if (canvasX >= box.left && canvasX <= box.right && canvasY >= box.top && canvasY <= box.bottom) {
+            nextHoveredZone = zid;
+            break;
+          }
+        }
+      }
+      if (nextHoveredNode !== hoveredNodeIdRef.current || nextHoveredZone !== hoveredZoneIdRef.current) {
+        hoveredNodeIdRef.current = nextHoveredNode;
+        hoveredZoneIdRef.current = nextHoveredZone;
+        idleFrozenRef.current = false;
+        idleSettleFramesRef.current = 0;
+      }
+      if (canvasRef.current) {
+        canvasRef.current.style.cursor = layoutEditModeRef.current
+          ? "crosshair"
+          : nextHoveredNode || nextHoveredZone
+            ? "pointer"
+            : "grab";
+      }
+      return;
+    }
     const dx = event.clientX - dragStartRef.current.x;
     const dy = event.clientY - dragStartRef.current.y;
     if (Math.hypot(dx, dy) > 5) isDraggingRef.current = true;
@@ -1865,8 +2080,16 @@ function GraphCanvasComponent({
     }
     if (!gestureConsumedRef.current && !isDraggingRef.current && dragStartRef.current) {
       const { x: canvasX, y: canvasY } = screenToCanvas(event.clientX, event.clientY);
+      const effectiveCollapsed = layoutEditModeRef.current ? new Set<string>() : collapsedZoneIdsRef.current;
+      const collapsedTopicSet = new Set<string>();
+      for (const z of zonesDataRef.current) {
+        if (effectiveCollapsed.has(z.id)) {
+          for (const tid of z.topic_ids) collapsedTopicSet.add(tid);
+        }
+      }
       let best: { id: string; d2: number } | null = null;
       for (const node of nodesDataRef.current) {
+        if (collapsedTopicSet.has(node.id)) continue;
         const position = nodesRef.current.get(node.id);
         if (!position) continue;
         const dx = position.x - canvasX;
@@ -1886,7 +2109,18 @@ function GraphCanvasComponent({
           onSelectTopicRef.current(best.id, null);
         }
       } else {
-        onSelectTopicRef.current(null, null);
+        let clickedZoneId: string | null = null;
+        for (const [zid, box] of zoneHitBoxesRef.current.entries()) {
+          if (canvasX >= box.left && canvasX <= box.right && canvasY >= box.top && canvasY <= box.bottom) {
+            clickedZoneId = zid;
+            break;
+          }
+        }
+        if (clickedZoneId && onToggleCollapseZoneRef.current && !layoutEditModeRef.current) {
+          onToggleCollapseZoneRef.current(clickedZoneId);
+        } else {
+          onSelectTopicRef.current(null, null);
+        }
       }
     }
 
@@ -1928,6 +2162,14 @@ function GraphCanvasComponent({
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
         onPointerCancel={onPointerCancel}
+        onPointerLeave={() => {
+          if (hoveredNodeIdRef.current !== null || hoveredZoneIdRef.current !== null) {
+            hoveredNodeIdRef.current = null;
+            hoveredZoneIdRef.current = null;
+            idleFrozenRef.current = false;
+            idleSettleFramesRef.current = 0;
+          }
+        }}
       />
     </div>
   );
@@ -1968,6 +2210,8 @@ export const GraphCanvas = React.memo(GraphCanvasComponent, (prev, next) => {
   if (prev.onSelectTopic !== next.onSelectTopic) return false;
   if (prev.onSelectedTopicAnchorChange !== next.onSelectedTopicAnchorChange) return false;
   if (prev.onNodePositionsChange !== next.onNodePositionsChange) return false;
+  if (prev.onToggleCollapseZone !== next.onToggleCollapseZone) return false;
+  if (!setsEqual(prev.collapsedZoneIds ?? new Set<string>(), next.collapsedZoneIds ?? new Set<string>())) return false;
   if (!setsEqual(prev.rootIds, next.rootIds)) return false;
   if (!setsEqual(prev.ancestorIds, next.ancestorIds)) return false;
   if (!setsEqual(prev.pathNodeIds, next.pathNodeIds)) return false;

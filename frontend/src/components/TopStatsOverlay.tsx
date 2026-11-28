@@ -36,6 +36,8 @@ export type TopStatsOverlayProps = {
   saveGraphLayout: () => Promise<void>;
   startGraphLayoutEdit: () => void;
   arrangeTreeLayout?: (direction: TreeLayoutDirection) => Promise<void>;
+  allZonesCollapsed?: boolean;
+  toggleCollapseAllZones?: () => void;
   setGraphLayoutEditing: React.Dispatch<React.SetStateAction<boolean>>;
   setGraphLayoutDraft: React.Dispatch<
     React.SetStateAction<Record<string, { x: number; y: number }> | null>
@@ -74,6 +76,8 @@ export function TopStatsOverlay({
   saveGraphLayout,
   startGraphLayoutEdit,
   arrangeTreeLayout,
+  allZonesCollapsed,
+  toggleCollapseAllZones,
   setGraphLayoutEditing,
   setGraphLayoutDraft,
   graphViewMode,
@@ -118,6 +122,8 @@ export function TopStatsOverlay({
           saveGraphLayout={saveGraphLayout}
           startGraphLayoutEdit={startGraphLayoutEdit}
           arrangeTreeLayout={arrangeTreeLayout}
+          allZonesCollapsed={allZonesCollapsed}
+          toggleCollapseAllZones={toggleCollapseAllZones}
           graphLayoutSaving={graphLayoutSaving}
           copy={copy}
           setGraphLayoutEditing={setGraphLayoutEditing}

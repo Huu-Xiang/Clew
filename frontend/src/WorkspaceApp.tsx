@@ -18,6 +18,7 @@ import {
 } from "./lib/appContracts";
 import { COMPACT_TOP_OVERLAY_THRESHOLD } from "./lib/appStatePersistence";
 import { readStoredCanvasStyle, writeStoredCanvasStyle, type CanvasStylePreferences } from "./lib/canvasStyle";
+import { readStoredCollapsedZones, writeStoredCollapsedZones } from "./lib/collapsedZones";
 import { computeTreeLayout, type TreeLayoutDirection } from "./lib/treeLayout";
 import { apiFetch, readErrorMessage } from "./lib/apiRequest";
 import { type ManualLayoutPositions, readManualLayoutPositions } from "./lib/appUiHelpers";
@@ -424,6 +425,54 @@ export default function WorkspaceApp({ chatgpt, ...preference }: { chatgpt: Chat
     handleSelectedTopicAnchorChange,
     handleSelectTopic,
   } = useTopicPopover({ activeGraph, isMobileViewport, graphShellRef });
+
+  const [collapsedZoneList, setCollapsedZoneList] = useState<string[]>(() => readStoredCollapsedZones(null));
+  useEffect(() => {
+    setCollapsedZoneList(readStoredCollapsedZones(activeGraph?.graph_id));
+  }, [activeGraph?.graph_id]);
+
+  const collapsedZoneIds = useMemo(() => {
+    const validIds = new Set(activeGraph?.zones.map((z) => z.id) ?? []);
+    return new Set(collapsedZoneList.filter((id) => validIds.has(id)));
+  }, [activeGraph?.zones, collapsedZoneList]);
+
+  const toggleCollapseZone = useCallback(
+    (zoneId: string) => {
+      if (!activeGraph) return;
+      setCollapsedZoneList((prev) => {
+        const next = prev.includes(zoneId) ? prev.filter((id) => id !== zoneId) : [...prev, zoneId];
+        writeStoredCollapsedZones(activeGraph.graph_id, next);
+        return next;
+      });
+    },
+    [activeGraph],
+  );
+
+  const nonEmptyZoneIds = useMemo(
+    () => (activeGraph?.zones ?? []).filter((z) => z.topic_ids.length > 0).map((z) => z.id),
+    [activeGraph?.zones],
+  );
+  const allZonesCollapsed = nonEmptyZoneIds.length > 0 && nonEmptyZoneIds.every((id) => collapsedZoneIds.has(id));
+  const toggleCollapseAllZones = useCallback(() => {
+    if (!activeGraph || nonEmptyZoneIds.length === 0) return;
+    const next = allZonesCollapsed ? [] : [...nonEmptyZoneIds];
+    setCollapsedZoneList(next);
+    writeStoredCollapsedZones(activeGraph.graph_id, next);
+    if (!allZonesCollapsed) {
+      handleSelectTopic(null, null);
+    }
+  }, [activeGraph, allZonesCollapsed, handleSelectTopic, nonEmptyZoneIds]);
+
+  // If a topic inside a collapsed zone is selected (e.g. via prerequisite link or session tab), auto-expand its zone.
+  useEffect(() => {
+    if (!activeGraph || !selectedTopicId || collapsedZoneList.length === 0) return;
+    const owningZone = activeGraph.zones.find((z) => z.topic_ids.includes(selectedTopicId));
+    if (owningZone && collapsedZoneList.includes(owningZone.id)) {
+      const next = collapsedZoneList.filter((id) => id !== owningZone.id);
+      setCollapsedZoneList(next);
+      writeStoredCollapsedZones(activeGraph.graph_id, next);
+    }
+  }, [activeGraph, collapsedZoneList, selectedTopicId]);
   useLayoutEffect(() => {
     quizRequestRef.current += 1;
     setQuizLoading(false);
@@ -1567,6 +1616,10 @@ export default function WorkspaceApp({ chatgpt, ...preference }: { chatgpt: Chat
           saveGraphLayout,
           startGraphLayoutEdit,
           arrangeTreeLayout,
+          collapsedZoneIds,
+          toggleCollapseZone,
+          allZonesCollapsed,
+          toggleCollapseAllZones,
           setGraphLayoutEditing,
           setGraphLayoutDraft,
           graphShellRef,

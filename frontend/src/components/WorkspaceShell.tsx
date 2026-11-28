@@ -168,6 +168,10 @@ type GraphWorkspaceProps = {
   saveGraphLayout: () => Promise<void>;
   startGraphLayoutEdit: () => void;
   arrangeTreeLayout?: (direction: TreeLayoutDirection) => Promise<void>;
+  collapsedZoneIds?: Set<string>;
+  toggleCollapseZone?: (zoneId: string) => void;
+  allZonesCollapsed?: boolean;
+  toggleCollapseAllZones?: () => void;
   setGraphLayoutEditing: StateSetter<boolean>;
   setGraphLayoutDraft: StateSetter<ManualLayoutPositions | null>;
   graphShellRef: React.RefObject<HTMLDivElement | null>;
@@ -326,6 +330,10 @@ export function WorkspaceShell(props: WorkspaceShellProps): React.JSX.Element {
     saveGraphLayout,
     startGraphLayoutEdit,
     arrangeTreeLayout,
+    collapsedZoneIds,
+    toggleCollapseZone,
+    allZonesCollapsed,
+    toggleCollapseAllZones,
     setGraphLayoutEditing,
     setGraphLayoutDraft,
     graphShellRef,
@@ -1134,6 +1142,8 @@ export function WorkspaceShell(props: WorkspaceShellProps): React.JSX.Element {
           saveGraphLayout={saveGraphLayout}
           startGraphLayoutEdit={startGraphLayoutEdit}
           arrangeTreeLayout={arrangeTreeLayout}
+          allZonesCollapsed={allZonesCollapsed}
+          toggleCollapseAllZones={toggleCollapseAllZones}
           setGraphLayoutEditing={setGraphLayoutEditing}
           setGraphLayoutDraft={setGraphLayoutDraft}
           graphViewMode={graphViewMode}
@@ -1168,6 +1178,8 @@ export function WorkspaceShell(props: WorkspaceShellProps): React.JSX.Element {
           saveGraphLayout={saveGraphLayout}
           startGraphLayoutEdit={startGraphLayoutEdit}
           arrangeTreeLayout={arrangeTreeLayout}
+          allZonesCollapsed={allZonesCollapsed}
+          toggleCollapseAllZones={toggleCollapseAllZones}
           setGraphLayoutEditing={setGraphLayoutEditing}
           setGraphLayoutDraft={setGraphLayoutDraft}
           graphViewMode={graphViewMode}
@@ -1202,6 +1214,8 @@ export function WorkspaceShell(props: WorkspaceShellProps): React.JSX.Element {
           saveGraphLayout={saveGraphLayout}
           startGraphLayoutEdit={startGraphLayoutEdit}
           arrangeTreeLayout={arrangeTreeLayout}
+          allZonesCollapsed={allZonesCollapsed}
+          toggleCollapseAllZones={toggleCollapseAllZones}
           setGraphLayoutEditing={setGraphLayoutEditing}
           setGraphLayoutDraft={setGraphLayoutDraft}
           graphViewMode={graphViewMode}
@@ -1265,6 +1279,8 @@ export function WorkspaceShell(props: WorkspaceShellProps): React.JSX.Element {
                     viewportCenteredWheelZoom={viewportCenteredZoom}
                     curvedEdgeLinesEnabled={!straightEdgeLinesEnabled}
                     canvasStyle={canvasStyle}
+                    collapsedZoneIds={collapsedZoneIds}
+                    onToggleCollapseZone={toggleCollapseZone}
                     themeMode={themeMode}
                     backgroundFill={graphCanvasBackgroundFill}
                   />

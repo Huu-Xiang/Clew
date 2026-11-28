@@ -88,6 +88,8 @@ export function OverlayControls({
   saveGraphLayout,
   startGraphLayoutEdit,
   arrangeTreeLayout,
+  allZonesCollapsed,
+  toggleCollapseAllZones,
   graphLayoutSaving,
   copy,
   setGraphLayoutEditing,
@@ -104,6 +106,8 @@ export function OverlayControls({
   saveGraphLayout: () => Promise<void>;
   startGraphLayoutEdit: () => void;
   arrangeTreeLayout?: (direction: TreeLayoutDirection) => Promise<void>;
+  allZonesCollapsed?: boolean;
+  toggleCollapseAllZones?: () => void;
   graphLayoutSaving: boolean;
   copy: AppCopy;
   setGraphLayoutEditing: React.Dispatch<React.SetStateAction<boolean>>;
@@ -153,6 +157,18 @@ export function OverlayControls({
           aria-pressed={viewportCenteredZoom}
         >
           {viewportCenteredZoom ? <LockSimple size={15} weight="bold" /> : <LockSimpleOpen size={15} weight="bold" />}
+        </button>
+      ) : null}
+      {activeGraph && graphViewMode === "2d" && !graphLayoutEditing && toggleCollapseAllZones && activeGraph.zones.length > 0 ? (
+        <button
+          className={`floatingStatusButton floatingStatusButtonText ${allZonesCollapsed ? "floatingStatusButtonActive" : ""}`}
+          onClick={toggleCollapseAllZones}
+          type="button"
+          title={allZonesCollapsed ? copy.graphStats.expandAllZonesTitle : copy.graphStats.collapseAllZonesTitle}
+          aria-label={allZonesCollapsed ? copy.graphStats.expandAllZonesTitle : copy.graphStats.collapseAllZonesTitle}
+          aria-pressed={Boolean(allZonesCollapsed)}
+        >
+          {allZonesCollapsed ? copy.graphStats.expandAllZones : copy.graphStats.collapseAllZones}
         </button>
       ) : null}
       {activeGraph && graphViewMode === "2d" && !graphLayoutEditing && arrangeTreeLayout ? (
