@@ -37,8 +37,15 @@ class CreateSessionRequest(BaseModel):
 class GraphExportRequest(BaseModel):
     title: str | None = Field(default=None, max_length=120)
     include_progress: bool = True
-    format: Literal["mapmind_graph_export", "mapmind_obsidian_export"] = "mapmind_graph_export"
+    format: Literal[
+        "mapmind_graph_export",
+        "mapmind_obsidian_export",
+        "mapmind_study_book_html",
+        "mapmind_study_book_md",
+    ] = "mapmind_graph_export"
     obsidian: "ObsidianExportOptions | None" = None
+    study_book: "StudyBookExportOptions | None" = None
+    model: str | None = None
 
 
 class GraphExportPackage(BaseModel):
@@ -56,6 +63,37 @@ class ObsidianExportOptions(BaseModel):
     include_descriptions: bool = True
     include_resources: bool = True
     include_artifacts: bool = True
+
+
+class StudyBookExportOptions(BaseModel):
+    mode: Literal["handbook", "blindspots_only"] = "handbook"
+    zone_ids: list[str] = Field(default_factory=list)
+    include_notes: bool = True
+    include_mistakes: bool = True
+    include_chat_qa: bool = True
+    ai_synthesize_blindspots: bool = False
+
+
+class StudyBookBlindspotItem(BaseModel):
+    misconception: str
+    correction: str
+
+
+class StudyBookExportPackage(BaseModel):
+    kind: Literal["mapmind_study_book_export"] = "mapmind_study_book_export"
+    version: int = 1
+    exported_at: str
+    source_graph_id: str
+    title: str
+    format: Literal["html", "markdown"]
+    mode: Literal["handbook", "blindspots_only"]
+    filename: str
+    mime_type: str
+    chapter_count: int
+    topic_count: int
+    mistake_count: int
+    qa_count: int
+    content: str
 
 
 class ObsidianExportFile(BaseModel):

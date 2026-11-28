@@ -11,6 +11,7 @@ export type AgentControls = {
   connect: () => void;
   openQuiz: (session: TopicQuizSession) => void;
   distillConversation?: () => Promise<void>;
+  distillBlindspots?: () => Promise<void>;
   applyDistillationSummary?: (messageId: string) => Promise<void>;
   applyDistillationAll?: (messageId: string, distillation: DistillationCard) => Promise<void>;
   applyDistillationProposal?: (messageId: string, proposal: ProposalGenerateResponse) => Promise<void>;

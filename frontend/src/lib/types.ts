@@ -530,7 +530,39 @@ export type GraphExportPackagePayload = {
   graph: GraphEnvelope;
 };
 
-export type GraphExportFormat = "mapmind_graph_export" | "mapmind_obsidian_export";
+export type GraphExportFormat =
+  | "mapmind_graph_export"
+  | "mapmind_obsidian_export"
+  | "mapmind_study_book_html"
+  | "mapmind_study_book_md";
+
+export type StudyBookMode = "handbook" | "blindspots_only";
+
+export type StudyBookExportOptions = {
+  mode: StudyBookMode;
+  zone_ids: string[];
+  include_notes: boolean;
+  include_mistakes: boolean;
+  include_chat_qa: boolean;
+  ai_synthesize_blindspots: boolean;
+};
+
+export type StudyBookExportPackagePayload = {
+  kind: "mapmind_study_book_export";
+  version: number;
+  exported_at: string;
+  source_graph_id: string;
+  title: string;
+  format: "html" | "markdown";
+  mode: StudyBookMode;
+  filename: string;
+  mime_type: string;
+  chapter_count: number;
+  topic_count: number;
+  mistake_count: number;
+  qa_count: number;
+  content: string;
+};
 
 export type ObsidianExportOptions = {
   use_folders_as_zones: boolean;

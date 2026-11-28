@@ -207,6 +207,7 @@ type TopicDetailsProps = {
   startQuiz: () => Promise<void>;
   markTopicFinished: () => Promise<void>;
   distillAfterQuiz?: () => Promise<void>;
+  distillBlindspots?: () => Promise<void>;
   reviewQuizMistakes?: (missed: import("../lib/types").QuizQuestionReview[]) => Promise<void>;
   addTopicKeyFile?: (topicId: string, sourceId: string, path: string, note?: string) => Promise<void>;
   removeTopicKeyFile?: (topicId: string, keyFileId: string) => Promise<void>;
@@ -1551,6 +1552,16 @@ export function WorkspaceShell(props: WorkspaceShellProps): React.JSX.Element {
                                 type="button"
                               >
                                 {copy.closure.reviewMistakesWithAi}
+                              </button>
+                            ) : null}
+                            {topicDetails.distillBlindspots && agentControls.authenticated ? (
+                              <button
+                                className="topicPopoverDistillBtn"
+                                disabled={chatLoading}
+                                onClick={() => void topicDetails.distillBlindspots?.()}
+                                type="button"
+                              >
+                                {copy.sessions.distillBlindspotsButton}
                               </button>
                             ) : null}
                           </details>

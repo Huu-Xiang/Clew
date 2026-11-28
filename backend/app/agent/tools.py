@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING
 
 from app.agent.context import graph_context
 from app.agent.contracts import (
+    BLINDSPOT_SYNTHESIS_TOOLS,
     CLOSURE_QUIZ_TOOLS,
     MATERIAL_TOOLS,
     TOOL_MODELS,
@@ -16,6 +17,7 @@ from app.agent.contracts import (
     QuestionDraft,
     ReadMaterialDraft,
     SearchMaterialsDraft,
+    StudyBookSynthesisDraft,
     WebSearchDraft,
 )
 from app.agent.providers import execute_external_web_search
@@ -41,6 +43,7 @@ LABELS = {
     "ask_question": "Waiting for your answer",
     "present_quiz": "Waiting for your answer",
     "create_closure_quiz": "Preparing your test",
+    "submit_blindspot_synthesis": "Synthesizing personal blindspots",
 }
 
 
@@ -175,6 +178,10 @@ async def execute_tool(runtime: AgentRuntime, run: AgentRun, tool: str, call_id:
             message.closure_quiz = public_quiz(session)
             result = {"status": "ready", "session_id": session.session_id, "topic_id": session.topic_id,
                       "question_count": session.question_count, "message": "The learner takes the test in Clew. Clew grades it and awards completion."}
+        elif tool == "submit_blindspot_synthesis":
+            assert isinstance(parsed, StudyBookSynthesisDraft)
+            run.blindspot_synthesis = parsed
+            result = {"status": "ready", "topic_count": len(parsed.topics)}
         else:
             raise ValueError("Unknown Clew tool.")
         message.activity.status = "completed"

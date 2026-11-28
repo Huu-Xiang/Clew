@@ -137,7 +137,11 @@ class ClosureQuizDraft(QuizQuestionSetDraft):
 class DistillationSummaryDraft(ToolInput):
     topic_id: str | None = Field(default=None, description="Target topic ID in this graph. Defaults to the selected topic.")
     title: str = Field(min_length=1, max_length=160, description="Concise title for the distilled study note.")
-    body: str = Field(min_length=1, max_length=20000, description="Structured Markdown summary (core takeaways, misconceptions/quiz review, and a Further Leads parking lot).")
+    body: str = Field(
+        min_length=1,
+        max_length=20000,
+        description="Structured Markdown summary (core takeaways, dedicated personal confusion/correction pairs when confusion or quiz mistakes occurred, and a Further Leads parking lot).",
+    )
 
 
 class DistillationDraft(ToolInput):
@@ -152,6 +156,21 @@ class DistillationDraft(ToolInput):
         if self.proposal is not None and not self.proposal.operations:
             raise ValueError("Distillation proposal must include at least one operation, or omit proposal when no graph change is needed.")
         return self
+
+
+class BlindspotPairDraft(ToolInput):
+    misconception: str = Field(min_length=1, max_length=600, description="What the learner got wrong, confused, or hesitated on.")
+    correction: str = Field(min_length=1, max_length=1000, description="Crisp corrective takeaway and rule of thumb.")
+
+
+class TopicBlindspotDraft(ToolInput):
+    topic_id: str = Field(min_length=1)
+    items: list[BlindspotPairDraft] = Field(default_factory=list, max_length=8)
+
+
+class StudyBookSynthesisDraft(ToolInput):
+    model_config = {"extra": "forbid"}
+    topics: list[TopicBlindspotDraft] = Field(default_factory=list)
 
 
 class ListMaterialsDraft(ToolInput):
@@ -185,6 +204,7 @@ TOOL_MODELS = {
     "ask_question": QuestionDraft,
     "present_quiz": InlineQuizDraft,
     "create_closure_quiz": ClosureQuizDraft,
+    "submit_blindspot_synthesis": StudyBookSynthesisDraft,
     "list_materials": ListMaterialsDraft,
     "search_materials": SearchMaterialsDraft,
     "read_material": ReadMaterialDraft,
@@ -195,6 +215,7 @@ TOOL_MODELS = {
 MATERIAL_TOOLS = frozenset({"list_materials", "search_materials", "read_material"})
 WEB_SEARCH_TOOLS = frozenset({"web_search"})
 CLOSURE_QUIZ_TOOLS = frozenset({"read_graph", "read_topic", "create_closure_quiz"})
+BLINDSPOT_SYNTHESIS_TOOLS = frozenset({"submit_blindspot_synthesis"})
 
 
 def tool_specs(
@@ -211,12 +232,14 @@ def tool_specs(
         "ask_question": "Show a focused question, optionally with choices and free-text replies. Ends this reply; the learner's answer arrives from Clew in a new turn.",
         "present_quiz": "Show one multiple-choice learning checkpoint with exactly four distinct choices. Ends this reply; Clew sends the server-graded answer in a new turn. Does not award topic completion.",
         "create_closure_quiz": "Register a complete closure quiz for a topic. Supply the requested number of questions with four distinct choices each. Clew checks prerequisites and grades the learner's answers itself.",
+        "submit_blindspot_synthesis": "Submit concise misconception-to-correction pairs synthesized from the learner's quiz mistakes and chat Q&A for each supplied topic.",
         "list_materials": "List files inside the graph's bound read-only local material folders (code repos, Markdown/TXT docs, PDFs).",
         "search_materials": "Search for a keyword, symbol, or phrase across the graph's bound local code, docs, and PDFs.",
         "read_material": "Read a line range from a bound code/text file or a page range from a bound PDF file.",
         "web_search": "Search the web using the learner's configured search API key for current documentation, facts, or references.",
     }
-    allowed = set(only) if only is not None else (set(TOOL_MODELS) - MATERIAL_TOOLS - WEB_SEARCH_TOOLS) | {"read_graph", "read_topic"}
+    excluded_default = MATERIAL_TOOLS | WEB_SEARCH_TOOLS | BLINDSPOT_SYNTHESIS_TOOLS
+    allowed = set(only) if only is not None else (set(TOOL_MODELS) - excluded_default) | {"read_graph", "read_topic"}
     if include_materials:
         allowed |= MATERIAL_TOOLS
     if include_web_search_tool:

@@ -10,9 +10,17 @@ from typing import Iterator
 import re
 import uuid
 
-from app.models.api import GraphExportPackage, ObsidianExportOptions, ObsidianGraphExportPackage
+from app.models.api import (
+    GraphExportPackage,
+    ObsidianExportOptions,
+    ObsidianGraphExportPackage,
+    StudyBookBlindspotItem,
+    StudyBookExportOptions,
+    StudyBookExportPackage,
+)
 from app.models.domain import Artifact, ChatMessage, CreateGraphRequest, Edge, GraphChatThread, GraphProposal, GraphSummary, MaterialSource, PatchOperation, QuizAttempt, ResourceLink, TopicKeyFile, TopicQuizSession, SnapshotRecord, StudyGraph, Topic, UpdateWorkspaceConfigRequest, WorkspaceDocument, WorkspaceEnvelope, Zone
 from app.services.obsidian_export import build_obsidian_export_package
+from app.services.study_book_export import build_study_book_export_package
 from app.services.repository_config import apply_workspace_config_update
 from app.services.proposal_validator import prerequisites_are_acyclic
 from app.services.repository_storage import (
@@ -737,6 +745,55 @@ class GraphRepository:
             title=export_title,
             include_progress=include_progress,
             options=options or ObsidianExportOptions(),
+        )
+
+    def list_graph_chat_threads(self, graph_id: str) -> list[GraphChatThread]:
+        """Load all chat sessions and ordered messages for a graph in two queries."""
+        with self._connect() as conn:
+            session_rows = conn.execute(
+                "SELECT session_id, graph_id, topic_id, title, created_at, updated_at "
+                "FROM chat_sessions WHERE graph_id = ? ORDER BY updated_at ASC",
+                (graph_id,),
+            ).fetchall()
+            msg_rows = conn.execute(
+                "SELECT session_id, payload_json FROM chat_messages "
+                "WHERE graph_id = ? ORDER BY ordinal ASC",
+                (graph_id,),
+            ).fetchall()
+        messages_by_session: dict[str, list[ChatMessage]] = {}
+        for row in msg_rows:
+            sid = str(row["session_id"])
+            messages_by_session.setdefault(sid, []).append(ChatMessage.model_validate_json(row["payload_json"]))
+        return [
+            self._thread_from_session(row, graph_id, messages_by_session.get(str(row["session_id"]), []))
+            for row in session_rows
+        ]
+
+    def export_graph_to_study_book(
+        self,
+        graph_id: str,
+        *,
+        title: str | None = None,
+        include_progress: bool = True,
+        book_format: str = "html",
+        options: StudyBookExportOptions | None = None,
+        ai_blindspots_by_topic: dict[str, list[StudyBookBlindspotItem]] | None = None,
+    ) -> StudyBookExportPackage:
+        graph = StudyGraph.model_validate(deepcopy(self.graph(graph_id).model_dump()))
+        export_title = (title or graph.title).strip() or graph.title
+        if not include_progress:
+            for topic in graph.topics:
+                topic.state = "not_started"
+            graph.quiz_attempts = []
+        threads = self.list_graph_chat_threads(graph_id)
+        return build_study_book_export_package(
+            graph,
+            threads,
+            title=export_title,
+            include_progress=include_progress,
+            book_format=book_format,
+            options=options,
+            ai_blindspots_by_topic=ai_blindspots_by_topic,
         )
 
     def import_graph_package(

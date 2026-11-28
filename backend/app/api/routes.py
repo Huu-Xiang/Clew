@@ -25,7 +25,8 @@ from app.api.route_helpers import (
 )
 from app.core.config import Settings, get_settings
 from app.core.locale import AppLocale
-from app.models.api import GraphExportRequest, GraphImportRequest, GraphLayoutPositionRequest, RenameGraphRequest, TopicArtifactInput, TopicResourceInput, UpdateGraphLayoutRequest
+from app.models.api import GraphExportRequest, GraphImportRequest, GraphLayoutPositionRequest, RenameGraphRequest, StudyBookExportOptions, TopicArtifactInput, TopicResourceInput, UpdateGraphLayoutRequest
+from app.services.study_book_export import collect_study_book_synthesis_inputs
 from app.models.domain import Artifact, CreateGraphRequest, GraphProposalEnvelope, MaterialSource, QuizStartRequest, QuizStartResponse, QuizSubmitRequest, QuizSubmitResponse, ResourceLink, TopicKeyFile, UpdateWorkspaceConfigRequest
 from app.services.material_service import MaterialError, MaterialService
 from app.services.debug_log_service import DebugClientLogRequest, get_debug_log_service
@@ -331,10 +332,11 @@ def delete_topic_key_file(
 
 
 @router.post("/api/v1/workspace/graphs/{graph_id}/export")
-def export_workspace_graph(
+async def export_workspace_graph(
     graph_id: str,
     request: GraphExportRequest,
     repository: GraphRepository = Depends(get_repository),
+    runtime=Depends(get_agent_runtime),
 ) -> dict:
     try:
         if request.format == "mapmind_obsidian_export":
@@ -344,6 +346,32 @@ def export_workspace_graph(
                 include_progress=request.include_progress,
                 options=request.obsidian,
             )
+        elif request.format in {"mapmind_study_book_html", "mapmind_study_book_md"}:
+            book_options = request.study_book or StudyBookExportOptions()
+            ai_blindspots = None
+            if book_options.ai_synthesize_blindspots:
+                graph = repository.graph(graph_id)
+                threads = repository.list_graph_chat_threads(graph_id)
+                candidate_payload = collect_study_book_synthesis_inputs(
+                    graph,
+                    threads,
+                    include_progress=request.include_progress,
+                    options=book_options,
+                )
+                if candidate_payload:
+                    ai_blindspots = await runtime.synthesize_study_book_blindspots(
+                        graph_id,
+                        candidate_payload,
+                        request.model,
+                    )
+            package = repository.export_graph_to_study_book(
+                graph_id,
+                title=request.title,
+                include_progress=request.include_progress,
+                book_format="html" if request.format == "mapmind_study_book_html" else "markdown",
+                options=book_options,
+                ai_blindspots_by_topic=ai_blindspots,
+            )
         else:
             package = repository.export_graph_package(
                 graph_id,
@@ -352,6 +380,8 @@ def export_workspace_graph(
             )
     except (ValueError, KeyError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except ChatGPTError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
     return package.model_dump(mode="json")
 
 

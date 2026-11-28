@@ -57,6 +57,8 @@ import type {
   QuizSubmitResponse,
   DebugLogSnapshot,
   SnapshotRecord,
+  StudyBookExportOptions,
+  StudyBookExportPackagePayload,
   TopicQuizSession,
   WorkspaceEnvelope,
 } from "./lib/types";
@@ -69,6 +71,17 @@ function defaultObsidianExportOptions(): ObsidianExportOptions {
     include_descriptions: true,
     include_resources: true,
     include_artifacts: true,
+  };
+}
+
+function defaultStudyBookExportOptions(): StudyBookExportOptions {
+  return {
+    mode: "handbook",
+    zone_ids: [],
+    include_notes: true,
+    include_mistakes: true,
+    include_chat_qa: true,
+    ai_synthesize_blindspots: false,
   };
 }
 
@@ -123,8 +136,9 @@ export default function WorkspaceApp({ chatgpt, ...preference }: { chatgpt: Chat
   const [exportGraphError, setExportGraphError] = useState<string | null>(null);
   const [exportGraphTitleDraft, setExportGraphTitleDraft] = useState("");
   const [exportGraphIncludeProgressDraft, setExportGraphIncludeProgressDraft] = useState(true);
-  const [exportGraphFormatDraft, setExportGraphFormatDraft] = useState<GraphExportFormat>("mapmind_graph_export");
+  const [exportGraphFormatDraft, setExportGraphFormatDraft] = useState<GraphExportFormat>("mapmind_study_book_html");
   const [exportGraphObsidianOptionsDraft, setExportGraphObsidianOptionsDraft] = useState<ObsidianExportOptions>(defaultObsidianExportOptions);
+  const [exportGraphStudyBookOptionsDraft, setExportGraphStudyBookOptionsDraft] = useState<StudyBookExportOptions>(defaultStudyBookExportOptions);
   const [deleteConfirm, setDeleteConfirm] = useState<{ graphId: string; title: string } | null>(null);
   const [sessionDeleteConfirm, setSessionDeleteConfirm] = useState<{ sessionId: string; title: string } | null>(null);
   const [graphLayoutEditing, setGraphLayoutEditing] = useState(false);
@@ -255,8 +269,9 @@ export default function WorkspaceApp({ chatgpt, ...preference }: { chatgpt: Chat
     setExportGraphLoading(false);
     setExportGraphTitleDraft("");
     setExportGraphIncludeProgressDraft(true);
-    setExportGraphFormatDraft("mapmind_graph_export");
+    setExportGraphFormatDraft("mapmind_study_book_html");
     setExportGraphObsidianOptionsDraft(defaultObsidianExportOptions());
+    setExportGraphStudyBookOptionsDraft(defaultStudyBookExportOptions());
   }, []);
   const openImportGraphModal = useCallback(() => {
     setCreateGraphOpen(false);
@@ -273,8 +288,9 @@ export default function WorkspaceApp({ chatgpt, ...preference }: { chatgpt: Chat
     setExportGraphTarget(graph);
     setExportGraphTitleDraft(graph.title);
     setExportGraphIncludeProgressDraft(true);
-    setExportGraphFormatDraft("mapmind_graph_export");
+    setExportGraphFormatDraft("mapmind_study_book_html");
     setExportGraphObsidianOptionsDraft(defaultObsidianExportOptions());
+    setExportGraphStudyBookOptionsDraft(defaultStudyBookExportOptions());
     setExportGraphError(null);
   }, []);
   const closeQuizModal = useCallback(() => {
@@ -904,6 +920,7 @@ export default function WorkspaceApp({ chatgpt, ...preference }: { chatgpt: Chat
       if (exportGraphFormatDraft === "mapmind_obsidian_export" && !supportsObsidianDirectoryExport()) {
         throw new Error(copy.errors.exportGraphObsidianUnsupported);
       }
+      const isStudyBook = exportGraphFormatDraft === "mapmind_study_book_html" || exportGraphFormatDraft === "mapmind_study_book_md";
       const response = await apiFetch(`${API_BASE}/api/v1/workspace/graphs/${graph.graph_id}/export`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -912,6 +929,8 @@ export default function WorkspaceApp({ chatgpt, ...preference }: { chatgpt: Chat
           include_progress: exportGraphIncludeProgressDraft,
           format: exportGraphFormatDraft,
           obsidian: exportGraphFormatDraft === "mapmind_obsidian_export" ? exportGraphObsidianOptionsDraft : undefined,
+          study_book: isStudyBook ? exportGraphStudyBookOptionsDraft : undefined,
+          model: isStudyBook && exportGraphStudyBookOptionsDraft.ai_synthesize_blindspots ? selectedChatModel : undefined,
         }),
       });
       if (!response.ok) {
@@ -920,6 +939,17 @@ export default function WorkspaceApp({ chatgpt, ...preference }: { chatgpt: Chat
       if (exportGraphFormatDraft === "mapmind_obsidian_export") {
         const payload = (await response.json()) as ObsidianGraphExportPackagePayload;
         if (!await writeObsidianExportPackageToDirectory(payload)) return;
+      } else if (isStudyBook) {
+        const payload = (await response.json()) as StudyBookExportPackagePayload;
+        const blob = new Blob([payload.content], { type: payload.mime_type });
+        const objectUrl = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.href = objectUrl;
+        link.download = payload.filename;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        URL.revokeObjectURL(objectUrl);
       } else {
         const payload = (await response.json()) as GraphExportPackagePayload;
         const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
@@ -1153,6 +1183,37 @@ export default function WorkspaceApp({ chatgpt, ...preference }: { chatgpt: Chat
     const targetTopicId = activeSessionTopicId ?? selectedTopicId;
     const targetTopic = targetTopicId ? activeGraph.topics.find((topic) => topic.id === targetTopicId) ?? null : null;
     const prompt = targetTopic ? copy.sessions.distillPromptTopic(targetTopic.title) : copy.sessions.distillPromptGraph;
+    await sendChat(prompt);
+  }
+
+  async function distillBlindspots(): Promise<void> {
+    if (!activeGraph) return;
+    setAssistantWidth((current) => Math.max(current, ASSISTANT_MIN_WIDTH));
+    const activeSessionTopicId = chatSessions.find((session) => session.session_id === (currentChatState.sessionId ?? activeSessionId))?.topic_id ?? null;
+    const targetTopicId = activeSessionTopicId ?? selectedTopicId;
+    const targetTopic = targetTopicId ? activeGraph.topics.find((topic) => topic.id === targetTopicId) ?? null : null;
+    if (!targetTopic) {
+      await sendChat(copy.sessions.distillBlindspotsPromptGraph);
+      return;
+    }
+    const missedLines: string[] = [];
+    const seen = new Set<string>();
+    for (const attempt of [...activeGraph.quiz_attempts].reverse()) {
+      if (attempt.topic_id !== targetTopic.id) continue;
+      for (const rev of attempt.missed_reviews ?? []) {
+        const key = rev.prompt.trim().toLowerCase();
+        if (!key || seen.has(key)) continue;
+        seen.add(key);
+        missedLines.push(`- ${rev.prompt} (${rev.selected_choice ? `${copy.quiz.yourAnswer(rev.selected_choice)}; ` : ""}${copy.quiz.correctAnswer(rev.correct_choice)})`);
+      }
+    }
+    const prompt = copy.sessions.distillBlindspotsPromptTopic(targetTopic.title, missedLines.slice(0, 10).join("\n"));
+    const matchingSession = chatSessions.find((session) => session.topic_id === targetTopic.id);
+    if (matchingSession && activeSessionId !== matchingSession.session_id) {
+      pendingDistillRef.current = { sessionId: matchingSession.session_id, prompt };
+      setActiveSessionId(matchingSession.session_id);
+      return;
+    }
     await sendChat(prompt);
   }
 
@@ -1654,6 +1715,7 @@ export default function WorkspaceApp({ chatgpt, ...preference }: { chatgpt: Chat
           startQuiz,
           markTopicFinished,
           distillAfterQuiz,
+          distillBlindspots,
           reviewQuizMistakes,
           addTopicKeyFile,
           removeTopicKeyFile,
@@ -1672,6 +1734,7 @@ export default function WorkspaceApp({ chatgpt, ...preference }: { chatgpt: Chat
               setQuizError(null);
             },
             distillConversation,
+            distillBlindspots,
             applyDistillationSummary: async (messageId) => { await applyDistillationSummary(messageId); },
             applyDistillationAll,
             applyDistillationProposal,
@@ -1820,6 +1883,9 @@ export default function WorkspaceApp({ chatgpt, ...preference }: { chatgpt: Chat
         setExportGraphFormatDraft={setExportGraphFormatDraft}
         exportGraphObsidianOptionsDraft={exportGraphObsidianOptionsDraft}
         setExportGraphObsidianOptionsDraft={setExportGraphObsidianOptionsDraft}
+        exportGraphStudyBookOptionsDraft={exportGraphStudyBookOptionsDraft}
+        setExportGraphStudyBookOptionsDraft={setExportGraphStudyBookOptionsDraft}
+        exportGraphAiAuthenticated={Boolean(chatgpt.account?.ready ?? (chatgpt.account?.authenticated && chatgpt.account?.sharing))}
         exportGraphError={exportGraphError}
         exportGraphLoading={exportGraphLoading}
         exportGraph={exportGraph}

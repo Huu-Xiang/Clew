@@ -58,6 +58,17 @@ export function AssistantComposer({
             {copy.sessions.distillButton}
           </button>
         ) : null}
+        {agentControls.distillBlindspots ? (
+          <button
+            className="assistantTemplate assistantTemplateDistill"
+            disabled={chatLoading || chatThreadLoading || !agentControls.authenticated}
+            onClick={() => void agentControls.distillBlindspots?.()}
+            title={copy.sessions.distillBlindspotsTitle}
+            type="button"
+          >
+            {copy.sessions.distillBlindspotsButton}
+          </button>
+        ) : null}
         {assistantTemplates.map((template) => (
           <button
             key={template.id}

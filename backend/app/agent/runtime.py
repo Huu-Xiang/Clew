@@ -9,7 +9,7 @@ from uuid import uuid4
 from app.agent.chatgpt_api import ChatGPTClient
 from app.agent.chatgpt_auth import CALLBACK_PATH, ChatGPTAuth, ChatGPTError, CredentialStore, KeyringCredentialStore
 from app.agent.context import BASE_INSTRUCTIONS, developer_instructions, turn_context
-from app.agent.contracts import CLOSURE_QUIZ_TOOLS, tool_specs
+from app.agent.contracts import BLINDSPOT_SYNTHESIS_TOOLS, CLOSURE_QUIZ_TOOLS, StudyBookSynthesisDraft, tool_specs
 from app.agent.providers import (
     AnthropicClient,
     OpenAICompatibleClient,
@@ -21,6 +21,7 @@ from app.agent.providers import (
 from app.agent.store import AgentStore
 from app.core.config import Settings
 from app.core.locale import AppLocale
+from app.models.api import StudyBookBlindspotItem
 from app.models.domain import ChatMessage, GraphChatRequest, TopicQuizSession
 from app.services.repository import GraphRepository
 
@@ -51,6 +52,8 @@ class AgentRun:
     quiz_topic_id: str | None = None
     quiz_count: int | None = None
     quiz_session: TopicQuizSession | None = None
+    blindspot_synthesis: StudyBookSynthesisDraft | None = None
+    tool_override: frozenset[str] | None = None
     cancel_requested: bool = False
     web_searched: bool = False
 
@@ -298,6 +301,57 @@ class AgentRuntime:
                 await self.interrupt_run(run)
             self.runs.pop(run.id, None)
 
+    async def synthesize_study_book_blindspots(
+        self,
+        graph_id: str,
+        candidate_topics_payload: list[dict],
+        model: str | None = None,
+    ) -> dict[str, list[StudyBookBlindspotItem]]:
+        if not candidate_topics_payload:
+            return {}
+        graph = self.repository.graph(graph_id)
+        selected = await self._select_model(model)
+        lang_instruction = (
+            "Write every misconception and correction in Simplified Chinese (zh-CN)."
+            if graph.language == "zh-CN"
+            else "Write every misconception and correction in English."
+        )
+        prompt = (
+            f"Analyze the learner's quiz mistakes and chat Q&A below for graph '{graph.title}'. "
+            f"{lang_instruction} For each topic that has clear confusion or errors, call submit_blindspot_synthesis "
+            f"with crisp 'misconception' -> 'correction' pairs (1-5 pairs per topic, concrete and non-generic).\n\n"
+            f"Candidate topics data:\n{json.dumps(candidate_topics_payload, ensure_ascii=False)}"
+        )
+        run = AgentRun(
+            id=uuid4().hex,
+            graph_id=graph_id,
+            session_id=None,
+            model=selected,
+            request=GraphChatRequest(prompt=prompt),
+            done=asyncio.get_running_loop().create_future(),
+            tool_override=BLINDSPOT_SYNTHESIS_TOOLS,
+        )
+        self.runs[run.id] = run
+        run.task = asyncio.create_task(self._execute(run, []))
+        try:
+            await asyncio.shield(run.done)
+            if run.error:
+                raise agent_error(run.error)
+            if run.blindspot_synthesis is None:
+                return {}
+            return {
+                t.topic_id: [
+                    StudyBookBlindspotItem(misconception=i.misconception, correction=i.correction)
+                    for i in t.items
+                ]
+                for t in run.blindspot_synthesis.topics
+                if t.items
+            }
+        finally:
+            if not run.done.done():
+                await self.interrupt_run(run)
+            self.runs.pop(run.id, None)
+
     def emit(self, run: AgentRun, event: dict) -> None:
         if run.session_id:
             self.store.emit(run.session_id, run.id, event)
@@ -390,7 +444,7 @@ class AgentRuntime:
                 and self.providers.has_custom_web_search()
             )
             tools = tool_specs(
-                CLOSURE_QUIZ_TOOLS if run.session_id is None else None,
+                run.tool_override or (CLOSURE_QUIZ_TOOLS if run.session_id is None else None),
                 include_materials=has_materials,
                 include_web_search_tool=use_custom_web_search_tool,
             )

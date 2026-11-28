@@ -8,21 +8,105 @@ export type Graph3DLayout = {
   center: GraphPoint3D;
   radius: number;
   zoneCenters: Map<string, GraphPoint3D>;
+  tiers: Map<string, number>;
+  tierElevations: number[];
 };
 
-function stableUnit(seed: string): GraphPoint3D {
-  const hashA = hashString(`${seed}:a`);
-  const hashB = hashString(`${seed}:b`);
-  const theta = ((hashA % 10000) / 10000) * Math.PI * 2;
-  const y = ((hashB % 10000) / 5000) - 1;
-  const radial = Math.sqrt(Math.max(0, 1 - y * y));
-  return { x: Math.cos(theta) * radial, y, z: Math.sin(theta) * radial };
+const TIER_SPACING = 52;
+
+function computeGlobalTiers(topics: Topic[], edges: Edge[]): Map<string, number> {
+  const topicIds = topics.map((t) => t.id);
+  const topicIdx = new Map(topics.map((t, i) => [t.id, i]));
+  const adj = new Map<string, string[]>();
+  const indeg = new Map<string, number>();
+  const outdeg = new Map<string, number>();
+  const tier = new Map<string, number>();
+
+  for (const id of topicIds) {
+    adj.set(id, []);
+    indeg.set(id, 0);
+    outdeg.set(id, 0);
+    tier.set(id, 0);
+  }
+
+  for (const edge of edges) {
+    if (edge.relation !== "requires") continue;
+    if (edge.source_topic_id === edge.target_topic_id) continue;
+    if (!topicIdx.has(edge.source_topic_id) || !topicIdx.has(edge.target_topic_id)) continue;
+    adj.get(edge.source_topic_id)!.push(edge.target_topic_id);
+    indeg.set(edge.target_topic_id, (indeg.get(edge.target_topic_id) ?? 0) + 1);
+    outdeg.set(edge.source_topic_id, (outdeg.get(edge.source_topic_id) ?? 0) + 1);
+  }
+
+  const remaining = new Set(topicIds);
+  while (remaining.size > 0) {
+    const ready = [...remaining]
+      .filter((id) => (indeg.get(id) ?? 0) === 0)
+      .sort((a, b) => (tier.get(a)! - tier.get(b)!) || (topicIdx.get(a)! - topicIdx.get(b)!));
+    const current =
+      ready[0] ??
+      [...remaining].sort((a, b) => {
+        const diffA = (outdeg.get(a) ?? 0) - (indeg.get(a) ?? 0);
+        const diffB = (outdeg.get(b) ?? 0) - (indeg.get(b) ?? 0);
+        return diffB - diffA || topicIdx.get(a)! - topicIdx.get(b)!;
+      })[0]!;
+    remaining.delete(current);
+    const currentTier = tier.get(current) ?? 0;
+    for (const next of adj.get(current) ?? []) {
+      if (!remaining.has(next)) continue;
+      indeg.set(next, Math.max(0, (indeg.get(next) ?? 0) - 1));
+      tier.set(next, Math.max(tier.get(next) ?? 0, currentTier + 1));
+    }
+  }
+  return tier;
 }
 
-function addScaled(target: GraphPoint3D, vector: GraphPoint3D, scale: number): void {
-  target.x += vector.x * scale;
-  target.y += vector.y * scale;
-  target.z += vector.z * scale;
+function orderZoneIds(
+  effectiveZoneIds: string[],
+  edges: Edge[],
+  topicZone: Map<string, string>,
+): string[] {
+  if (effectiveZoneIds.length <= 1) return effectiveZoneIds;
+  const zoneOrder = new Map(effectiveZoneIds.map((id, i) => [id, i]));
+  const adj = new Map<string, Set<string>>();
+  const indeg = new Map<string, number>();
+  const outdeg = new Map<string, number>();
+  for (const zid of effectiveZoneIds) {
+    adj.set(zid, new Set());
+    indeg.set(zid, 0);
+    outdeg.set(zid, 0);
+  }
+  for (const edge of edges) {
+    if (edge.relation !== "requires") continue;
+    const sz = topicZone.get(edge.source_topic_id);
+    const tz = topicZone.get(edge.target_topic_id);
+    if (!sz || !tz || sz === tz) continue;
+    if (!adj.get(sz)!.has(tz)) {
+      adj.get(sz)!.add(tz);
+      indeg.set(tz, (indeg.get(tz) ?? 0) + 1);
+      outdeg.set(sz, (outdeg.get(sz) ?? 0) + 1);
+    }
+  }
+  const remaining = new Set(effectiveZoneIds);
+  const ordered: string[] = [];
+  while (remaining.size > 0) {
+    const ready = [...remaining]
+      .filter((id) => (indeg.get(id) ?? 0) === 0)
+      .sort((a, b) => zoneOrder.get(a)! - zoneOrder.get(b)!);
+    const curr =
+      ready[0] ??
+      [...remaining].sort((a, b) => {
+        const diffA = (outdeg.get(a) ?? 0) - (indeg.get(a) ?? 0);
+        const diffB = (outdeg.get(b) ?? 0) - (indeg.get(b) ?? 0);
+        return diffB - diffA || zoneOrder.get(a)! - zoneOrder.get(b)!;
+      })[0]!;
+    remaining.delete(curr);
+    ordered.push(curr);
+    for (const nxt of adj.get(curr) ?? []) {
+      if (remaining.has(nxt)) indeg.set(nxt, Math.max(0, (indeg.get(nxt) ?? 0) - 1));
+    }
+  }
+  return ordered;
 }
 
 function distance(left: GraphPoint3D, right: GraphPoint3D): number {
@@ -36,6 +120,8 @@ export function buildGraph3DLayout(topics: Topic[], edges: Edge[], zones: Zone[]
       center: { x: 0, y: 0, z: 0 },
       radius: 120,
       zoneCenters: new Map(),
+      tiers: new Map(),
+      tierElevations: [],
     };
   }
 
@@ -47,10 +133,20 @@ export function buildGraph3DLayout(topics: Topic[], edges: Edge[], zones: Zone[]
     }
   }
 
-  const effectiveZoneIds = [
+  const rawZoneIds = [
     ...zones.filter((zone) => zone.topic_ids.some((topicId) => topicIndex.has(topicId))).map((zone) => zone.id),
     ...(topics.some((topic) => !topicZone.has(topic.id)) ? ["__unassigned__"] : []),
   ];
+  const effectiveZoneIds = orderZoneIds(rawZoneIds, edges, topicZone);
+
+  const tiers = computeGlobalTiers(topics, edges);
+  const maxTier = Math.max(0, ...tiers.values());
+  const midTier = maxTier / 2;
+  const tierElevations: number[] = [];
+  for (let t = 0; t <= maxTier; t += 1) {
+    tierElevations.push((t - midTier) * TIER_SPACING);
+  }
+
   const zoneMembers = new Map<string, string[]>();
   for (const zoneId of effectiveZoneIds) zoneMembers.set(zoneId, []);
   for (const topic of topics) {
@@ -58,135 +154,149 @@ export function buildGraph3DLayout(topics: Topic[], edges: Edge[], zones: Zone[]
     zoneMembers.set(zoneId, [...(zoneMembers.get(zoneId) ?? []), topic.id]);
   }
 
-  const zoneLevelProfiles = new Map<string, { midpoint: number; spacing: number }>();
-  for (const [zoneId, memberIds] of zoneMembers) {
-    const levels = memberIds.map((topicId) => topics[topicIndex.get(topicId) ?? 0]?.level ?? 0);
-    const minimum = levels.length > 0 ? Math.min(...levels) : 0;
-    const maximum = levels.length > 0 ? Math.max(...levels) : 0;
-    const range = Math.max(1, maximum - minimum);
-    zoneLevelProfiles.set(zoneId, {
-      midpoint: (minimum + maximum) / 2,
-      spacing: Math.min(24, Math.max(10, 116 / range)),
-    });
-  }
+  // Place zones on a non-overlapping horizontal X-Z grid so modules stay separated.
+  const maxMembersInZone = Math.max(1, ...[...zoneMembers.values()].map((m) => m.length));
+  const zoneFootprintRadius = 46 + Math.sqrt(maxMembersInZone) * 20;
+  const cellSpacing = zoneFootprintRadius * 2.55;
+  const cols = Math.max(1, Math.ceil(Math.sqrt(effectiveZoneIds.length)));
+  const rows = Math.ceil(effectiveZoneIds.length / cols);
 
   const zoneCenters = new Map<string, GraphPoint3D>();
-  const goldenAngle = Math.PI * (3 - Math.sqrt(5));
-  effectiveZoneIds.forEach((zoneId, index) => {
-    if (effectiveZoneIds.length === 1) {
-      zoneCenters.set(zoneId, { x: 0, y: 0, z: 0 });
-      return;
-    }
-    const angle = index * goldenAngle;
-    const normalizedY = 1 - (2 * (index + 0.5)) / effectiveZoneIds.length;
-    const radial = Math.sqrt(Math.max(0, 1 - normalizedY * normalizedY));
-    const sphereRadius = 190 + Math.sqrt(effectiveZoneIds.length) * 44;
+  effectiveZoneIds.forEach((zoneId, idx) => {
+    const col = idx % cols;
+    const row = Math.floor(idx / cols);
+    const stagger = row % 2 === 1 && cols > 1 ? cellSpacing * 0.24 : 0;
     zoneCenters.set(zoneId, {
-      x: Math.cos(angle) * radial * sphereRadius,
-      y: normalizedY * sphereRadius,
-      z: Math.sin(angle) * radial * sphereRadius,
+      x: (col - (cols - 1) / 2) * cellSpacing + stagger,
+      y: 0,
+      z: (row - (rows - 1) / 2) * cellSpacing,
     });
   });
 
+  // Initial deterministic placement within each (zone, tier) slice on X-Z, Y strictly locked to tier.
   const positions = new Map<string, GraphPoint3D>();
-  for (const topic of topics) {
-    const zoneId = topicZone.get(topic.id) ?? "__unassigned__";
-    const center = zoneCenters.get(zoneId) ?? { x: 0, y: 0, z: 0 };
-    const levelProfile = zoneLevelProfiles.get(zoneId) ?? { midpoint: 0, spacing: 18 };
-    const direction = stableUnit(topic.id);
-    const memberCount = zoneMembers.get(zoneId)?.length ?? 1;
-    const scatter = 30 + Math.sqrt(memberCount) * 8;
-    positions.set(topic.id, {
-      x: center.x + direction.x * scatter,
-      y: center.y + (topic.level - levelProfile.midpoint) * levelProfile.spacing + direction.y * scatter * 0.5,
-      z: center.z + direction.z * scatter,
-    });
+  for (const zoneId of effectiveZoneIds) {
+    const zCenter = zoneCenters.get(zoneId) ?? { x: 0, y: 0, z: 0 };
+    const members = zoneMembers.get(zoneId) ?? [];
+    const byTier = new Map<number, string[]>();
+    for (const tid of members) {
+      const t = tiers.get(tid) ?? 0;
+      byTier.set(t, [...(byTier.get(t) ?? []), tid]);
+    }
+    for (const [tier, slice] of byTier) {
+      slice.sort((a, b) => (topicIndex.get(a) ?? 0) - (topicIndex.get(b) ?? 0));
+      const count = slice.length;
+      const y = (tier - midTier) * TIER_SPACING;
+      slice.forEach((tid, idx) => {
+        if (count === 1) {
+          const jitterAngle = ((hashString(tid) % 360) * Math.PI) / 180;
+          positions.set(tid, {
+            x: zCenter.x + Math.cos(jitterAngle) * 8,
+            y,
+            z: zCenter.z + Math.sin(jitterAngle) * 8,
+          });
+          return;
+        }
+        const angle = (idx / count) * Math.PI * 2 + ((hashString(zoneId) % 100) / 100) * 0.5;
+        const ringRadius = Math.min(zoneFootprintRadius * 0.78, 28 + count * 9.5);
+        positions.set(tid, {
+          x: zCenter.x + Math.cos(angle) * ringRadius,
+          y,
+          z: zCenter.z + Math.sin(angle) * ringRadius,
+        });
+      });
+    }
   }
 
-  const velocities = new Map(topics.map((topic) => [topic.id, { x: 0, y: 0, z: 0 }]));
-  const edgePairs = edges
-    .map((edge) => ({ edge, source: positions.get(edge.source_topic_id), target: positions.get(edge.target_topic_id) }))
-    .filter((item): item is { edge: Edge; source: GraphPoint3D; target: GraphPoint3D } => Boolean(item.source && item.target));
+  // Gentle X-Z only relaxation within zone bounds; Y remains strictly stratified.
+  const velocities = new Map(topics.map((t) => [t.id, { x: 0, z: 0 }]));
+  const intraEdges = edges
+    .map((e) => ({
+      edge: e,
+      source: positions.get(e.source_topic_id),
+      target: positions.get(e.target_topic_id),
+      sameZone: (topicZone.get(e.source_topic_id) ?? "__unassigned__") === (topicZone.get(e.target_topic_id) ?? "__unassigned__"),
+    }))
+    .filter((item): item is { edge: Edge; source: GraphPoint3D; target: GraphPoint3D; sameZone: boolean } => Boolean(item.source && item.target && item.sameZone));
 
-  const iterations = topics.length > 450 ? 72 : topics.length > 220 ? 96 : 128;
-  for (let iteration = 0; iteration < iterations; iteration += 1) {
-    const temperature = 1 - iteration / iterations;
-    for (let leftIndex = 0; leftIndex < topics.length; leftIndex += 1) {
-      const leftTopic = topics[leftIndex];
+  const iterations = topics.length > 260 ? 36 : 56;
+  const maxOffsetFromZone = zoneFootprintRadius * 0.88;
+  for (let iter = 0; iter < iterations; iter += 1) {
+    for (let i = 0; i < topics.length; i += 1) {
+      const leftTopic = topics[i];
       const left = positions.get(leftTopic.id)!;
-      const leftVelocity = velocities.get(leftTopic.id)!;
-      for (let rightIndex = leftIndex + 1; rightIndex < topics.length; rightIndex += 1) {
-        const rightTopic = topics[rightIndex];
+      const lv = velocities.get(leftTopic.id)!;
+      const leftZone = topicZone.get(leftTopic.id) ?? "__unassigned__";
+      for (let j = i + 1; j < topics.length; j += 1) {
+        const rightTopic = topics[j];
+        if ((topicZone.get(rightTopic.id) ?? "__unassigned__") !== leftZone) continue;
         const right = positions.get(rightTopic.id)!;
         const dx = left.x - right.x;
-        const dy = left.y - right.y;
         const dz = left.z - right.z;
-        const rawDistance = Math.hypot(dx, dy, dz) || 0.001;
-        if (rawDistance > 190) continue;
-        const sameZone = (topicZone.get(leftTopic.id) ?? "__unassigned__") === (topicZone.get(rightTopic.id) ?? "__unassigned__");
-        const strength = (sameZone ? 420 : 760) / Math.max(rawDistance * rawDistance, 36);
-        const rightVelocity = velocities.get(rightTopic.id)!;
-        leftVelocity.x += (dx / rawDistance) * strength;
-        leftVelocity.y += (dy / rawDistance) * strength;
-        leftVelocity.z += (dz / rawDistance) * strength;
-        rightVelocity.x -= (dx / rawDistance) * strength;
-        rightVelocity.y -= (dy / rawDistance) * strength;
-        rightVelocity.z -= (dz / rawDistance) * strength;
+        const sameTier = tiers.get(leftTopic.id) === tiers.get(rightTopic.id);
+        const dist = Math.hypot(dx, dz) || 0.01;
+        const minClearance = sameTier ? 48 : 28;
+        if (dist >= minClearance) continue;
+        const push = ((minClearance - dist) / minClearance) * 1.4;
+        const rv = velocities.get(rightTopic.id)!;
+        lv.x += (dx / dist) * push;
+        lv.z += (dz / dist) * push;
+        rv.x -= (dx / dist) * push;
+        rv.z -= (dz / dist) * push;
       }
     }
 
-    for (const { edge, source, target } of edgePairs) {
+    for (const { source, target } of intraEdges) {
       const dx = target.x - source.x;
-      const dy = target.y - source.y;
       const dz = target.z - source.z;
-      const currentDistance = Math.hypot(dx, dy, dz) || 0.001;
-      const sourceLevel = topics[topicIndex.get(edge.source_topic_id) ?? 0]?.level ?? 0;
-      const targetLevel = topics[topicIndex.get(edge.target_topic_id) ?? 0]?.level ?? 0;
-      const sourceZone = topicZone.get(edge.source_topic_id) ?? "__unassigned__";
-      const targetZone = topicZone.get(edge.target_topic_id) ?? "__unassigned__";
-      const sameZone = sourceZone === targetZone;
-      const targetDistance = sameZone
-        ? 42 + Math.abs(targetLevel - sourceLevel) * 7
-        : Math.max(150, distance(zoneCenters.get(sourceZone)!, zoneCenters.get(targetZone)!) * 0.72);
-      const force = (currentDistance - targetDistance) * (sameZone ? 0.0018 : 0.00032);
-      const sourceVelocity = velocities.get(edge.source_topic_id)!;
-      const targetVelocity = velocities.get(edge.target_topic_id)!;
-      sourceVelocity.x += (dx / currentDistance) * force;
-      sourceVelocity.y += (dy / currentDistance) * force;
-      sourceVelocity.z += (dz / currentDistance) * force;
-      targetVelocity.x -= (dx / currentDistance) * force;
-      targetVelocity.y -= (dy / currentDistance) * force;
-      targetVelocity.z -= (dz / currentDistance) * force;
+      const dist = Math.hypot(dx, dz) || 0.01;
+      const targetDist = 42;
+      const force = (dist - targetDist) * 0.018;
+      const sv = velocities.get(
+        topics.find((t) => positions.get(t.id) === source)?.id ?? "",
+      );
+      const tv = velocities.get(
+        topics.find((t) => positions.get(t.id) === target)?.id ?? "",
+      );
+      if (sv && tv) {
+        sv.x += (dx / dist) * force;
+        sv.z += (dz / dist) * force;
+        tv.x -= (dx / dist) * force;
+        tv.z -= (dz / dist) * force;
+      }
     }
 
     for (const topic of topics) {
-      const position = positions.get(topic.id)!;
-      const velocity = velocities.get(topic.id)!;
-      const zoneId = topicZone.get(topic.id) ?? "__unassigned__";
-      const zoneCenter = zoneCenters.get(zoneId) ?? { x: 0, y: 0, z: 0 };
-      const levelProfile = zoneLevelProfiles.get(zoneId) ?? { midpoint: 0, spacing: 18 };
-      const zoneAttraction = topics.length >= 160 ? 0.00165 : 0.0009;
-      velocity.x += (zoneCenter.x - position.x) * zoneAttraction;
-      velocity.z += (zoneCenter.z - position.z) * zoneAttraction;
-      const levelTarget = zoneCenter.y + (topic.level - levelProfile.midpoint) * levelProfile.spacing;
-      velocity.y += (levelTarget - position.y) * Math.max(0.0012, zoneAttraction);
-      velocity.x *= 0.84;
-      velocity.y *= 0.84;
-      velocity.z *= 0.84;
-      const step = 0.65 + temperature * 1.35;
-      addScaled(position, velocity, step);
+      const pos = positions.get(topic.id)!;
+      const vel = velocities.get(topic.id)!;
+      const zCenter = zoneCenters.get(topicZone.get(topic.id) ?? "__unassigned__") ?? { x: 0, y: 0, z: 0 };
+      vel.x = (vel.x + (zCenter.x - pos.x) * 0.025) * 0.72;
+      vel.z = (vel.z + (zCenter.z - pos.z) * 0.025) * 0.72;
+      pos.x += vel.x;
+      pos.z += vel.z;
+      const offsetX = pos.x - zCenter.x;
+      const offsetZ = pos.z - zCenter.z;
+      const offsetDist = Math.hypot(offsetX, offsetZ);
+      if (offsetDist > maxOffsetFromZone) {
+        const scale = maxOffsetFromZone / offsetDist;
+        pos.x = zCenter.x + offsetX * scale;
+        pos.z = zCenter.z + offsetZ * scale;
+      }
     }
   }
 
-  const center = topics.reduce<GraphPoint3D>((sum, topic) => {
-    const position = positions.get(topic.id)!;
-    sum.x += position.x / topics.length;
-    sum.y += position.y / topics.length;
-    sum.z += position.z / topics.length;
-    return sum;
-  }, { x: 0, y: 0, z: 0 });
+  const center = topics.reduce<GraphPoint3D>(
+    (sum, topic) => {
+      const position = positions.get(topic.id)!;
+      sum.x += position.x / topics.length;
+      sum.y += position.y / topics.length;
+      sum.z += position.z / topics.length;
+      return sum;
+    },
+    { x: 0, y: 0, z: 0 },
+  );
   let radius = 0;
   for (const position of positions.values()) radius = Math.max(radius, distance(position, center));
 
-  return { positions, center, radius: Math.max(radius, 120), zoneCenters };
+  return { positions, center, radius: Math.max(radius, 120), zoneCenters, tiers, tierElevations };
 }
